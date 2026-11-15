@@ -230,7 +230,7 @@ fn test_quick_add_variants() {
     .unwrap();
     assert_eq!(tx.postings.len(), 2);
 
-    // Transfer with a P&L endpoint is rejected (design doc 25, P0-2)
+    // Transfer with a P&L endpoint is rejected (design doc 11, P0-2)
     let err = quick_add_transaction(
         &conn,
         &QuickAddInput {

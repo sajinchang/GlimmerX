@@ -1,4 +1,4 @@
-//! Tests for the ledger capability layer (design doc 25, P1).
+//! Tests for the ledger capability layer (design doc 11, P1).
 //!
 //! Fixtures go through the real APIs — `init_schema` for the database,
 //! `create_account_with_path` for accounts — never hand-written DDL.

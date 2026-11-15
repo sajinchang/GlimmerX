@@ -1,4 +1,4 @@
-//! Write capabilities (design doc 25, §3.2–§3.4).
+//! Write capabilities (design doc 11, §3.2–§3.4).
 //!
 //! Two functions, both returning rich outcomes. The transaction boundary
 //! belongs to the quick-add layer — this module never opens its own

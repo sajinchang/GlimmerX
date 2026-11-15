@@ -1,10 +1,27 @@
 #!/bin/sh
-# pre-commit hook: run make check before allowing commits
-# make check runs: tsc --noEmit, eslint, prettier --check, cargo fmt --check, cargo clippy
+# pre-commit hook: runs the same checks as `make check`, scoped to what changed.
+#   python (always): error message table --check + docs check — these also cover
+#     docs/, i18n locales and the generated errors/messages.rs, which the
+#     frontend/backend filters below do not match.
+#   frontend: tsc --noEmit, eslint, prettier --check
+#   backend: cargo fmt --check, cargo clippy
 
 set -e
 
-echo "→ [pre-commit] Running make check..."
+PY=""
+if command -v python3 >/dev/null 2>&1; then
+    PY=python3
+elif command -v python >/dev/null 2>&1; then
+    PY=python
+fi
+
+echo "→ [pre-commit] Error message table + docs check..."
+if [ -n "$PY" ]; then
+    $PY tools/gen_error_messages.py --check
+    $PY tools/check_docs.py
+else
+    echo "   python not found — skipping error table/docs check"
+fi
 
 # Only run frontend checks if there are staged frontend files
 # (skip rust checks if only frontend files changed, and vice versa)
@@ -16,7 +33,7 @@ if [ "$FRONTEND_CHANGED" -gt 0 ] || [ "$BACKEND_CHANGED" -gt 0 ]; then
         echo "   Frontend changes detected — running tsc + eslint + prettier..."
         npx tsc --noEmit
         npx eslint . --max-warnings=0
-        npx prettier --check "src/**/*.{ts,tsx,css,json}"
+        npx prettier --check "src/**/*.{ts,tsx,css,json}" "fixtures/**/*.json"
     fi
 
     if [ "$BACKEND_CHANGED" -gt 0 ]; then

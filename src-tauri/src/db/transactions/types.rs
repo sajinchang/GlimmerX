@@ -52,7 +52,7 @@ pub struct QuickAddInput {
     pub category_id: Option<String>,
     /// Category by name: the db layer derives the type from `mode` and
     /// resolves-or-creates the category (and its mirror account) inside the
-    /// same transaction as the posting writes (design doc 25, P0-3).
+    /// same transaction as the posting writes (design doc 11, P0-3).
     /// Only meaningful for expense/income; rejected for transfers.
     pub category_name: Option<String>,
     pub description: Option<String>,

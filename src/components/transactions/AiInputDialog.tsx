@@ -52,7 +52,7 @@ interface AiInputDialogProps {
 
 /**
  * `receipt` is not a confirmation step: by the time it appears the transaction
- * is already in the ledger (design doc 25, §4.2). It exists so the user can see
+ * is already in the ledger (design doc 11, §4.2). It exists so the user can see
  * what was written, undo it, or correct it — "optimistic write + undo" replaces
  * the old blocking confirmation card.
  *

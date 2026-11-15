@@ -309,7 +309,7 @@ export interface QuickAddInput {
 }
 
 // ---------------------------------------------------------------------------
-// AI proposal (design doc 25, §4.2 — propose only, confirm before writing)
+// AI proposal (design doc 11, §4.2 — propose only, confirm before writing)
 // ---------------------------------------------------------------------------
 
 /** An account the AI proposal resolved to, ready for the confirm step. */
@@ -513,7 +513,7 @@ export interface UpdateSavingsGoalInput {
 }
 
 // ---------------------------------------------------------------------------
-// MCP (design doc 25, §5/§8)
+// MCP (design doc 11, §5/§8)
 // ---------------------------------------------------------------------------
 
 export type McpTrustMode = "readonly" | "trust";

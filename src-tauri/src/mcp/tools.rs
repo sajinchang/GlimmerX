@@ -1,4 +1,4 @@
-//! MCP tool set (design doc 25, §5.3).
+//! MCP tool set (design doc 11, §5.3).
 //!
 //! All rmcp types are confined to this file (and `mod.rs`); `commands/` and
 //! `db/` never see them. Reads go through the ledger capability layer; writes
@@ -82,7 +82,7 @@ fn to_json_value<T: serde::Serialize>(value: T) -> Result<serde_json::Value, App
     serde_json::to_value(value).map_err(|e| AppError::IoError(e.to_string()))
 }
 
-/// [`call_ledger`] with an optional idempotency key (design doc 25, §6).
+/// [`call_ledger`] with an optional idempotency key (design doc 11, §6).
 ///
 /// Claim, write and complete run inside one `with_db` closure so the row and
 /// the write travel on the same connection. The outcome is carried as an
@@ -232,7 +232,7 @@ impl LedgerTools {
     /// user through a Tauri event, but that channel is invisible to the MCP
     /// client — an external agent could only wait out the timeout. Writes are
     /// now always immediate under `Trust`, and the user can undo them in the
-    /// app afterwards (design doc 25, §5.4).
+    /// app afterwards (design doc 11, §5.4).
     fn gate_write(&self) -> Result<(), CallToolResult> {
         let trust = match self.host.mcp_config() {
             Ok(config) => config.trust,
@@ -492,7 +492,7 @@ fn json_contents(uri: &str, value: &serde_json::Value) -> ReadResourceResult {
 
 #[rmcp::tool_handler(name = "glimmerx")]
 impl rmcp::ServerHandler for LedgerTools {
-    /// Hand-written because the macro only declares `tools` (design doc 25,
+    /// Hand-written because the macro only declares `tools` (design doc 11,
     /// §5.6): resources need to be announced here, and the macro skips
     /// `get_info` whenever the impl block already has one.
     fn get_info(&self) -> ServerConfig {
@@ -632,7 +632,7 @@ mod tests {
         backing: Backing,
         trust: Result<TrustMode, String>,
         path: Option<String>,
-        /// Independent of the trust tier (design doc 25, §4.3).
+        /// Independent of the trust tier (design doc 11, §4.3).
         allow_create_account: bool,
     }
 
@@ -927,7 +927,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_account_is_gated_independently_of_trust() {
         // Trust lets the agent record spending; it does not let it invent
-        // accounts (design doc 25, §4.3).
+        // accounts (design doc 11, §4.3).
         let tools = LedgerTools::new(FakeHost::ledger(TrustMode::Trust));
         let result = tools
             .create_account(Parameters(CreateAccountParams {
@@ -956,7 +956,7 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------
-    // Idempotency (design doc 25, §6)
+    // Idempotency (design doc 11, §6)
     // ---------------------------------------------------------------------
 
     /// How many transactions the fake ledger actually holds.
@@ -1100,7 +1100,7 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------
-    // Resources (design doc 25, §5.6)
+    // Resources (design doc 11, §5.6)
     // ---------------------------------------------------------------------
 
     #[test]

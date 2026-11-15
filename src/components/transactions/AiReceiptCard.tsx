@@ -25,7 +25,7 @@ const DIRECTION_KEY: Record<AiProposal["action"], string> = {
 /**
  * What the AI decided, as a receipt rather than a debug dump.
  *
- * The entry is already in the ledger when this renders (design doc 25, §4.2), so
+ * The entry is already in the ledger when this renders (design doc 11, §4.2), so
  * the card is not a gate — it is the record plus the two ways out (undo, edit).
  * `state` only changes the status line: the layout is identical while the write
  * is in flight, so nothing jumps when it lands.

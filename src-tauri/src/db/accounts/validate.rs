@@ -1,6 +1,6 @@
 //! Shared validation for balance-sheet endpoints.
 //!
-//! Extracted from `transfer.rs` (design doc 25, P0-1): both transfer write
+//! Extracted from `transfer.rs` (design doc 11, P0-1): both transfer write
 //! paths — `db::accounts::transfer::create_transfer` and the quick-add
 //! transfer branch — must enforce the same endpoint rule, otherwise the
 //! weaker path lets money appear out of a P&L account.

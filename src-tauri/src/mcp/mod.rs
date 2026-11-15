@@ -1,4 +1,4 @@
-//! MCP server assembly and lifecycle (design doc 25, §5 / §10.5).
+//! MCP server assembly and lifecycle (design doc 11, §5 / §10.5).
 //!
 //! The server runs inside the app process: the SQLCipher key, the
 //! `Mutex<Option<Database>>` lock semantics and the localized error text are
@@ -193,7 +193,7 @@ async fn serve(host: Arc<dyn McpHost>, token: String, preferred_port: u16) -> Re
     host.set_runtime_port(bound_port);
 
     let config = StreamableHttpServerConfig::default()
-        // Dual version (design doc 25, §5.5): requests that negotiate
+        // Dual version (design doc 11, §5.5): requests that negotiate
         // 2026-07-28 are served statelessly regardless of this flag (SEP-2567),
         // while older clients still get the `initialize` handshake and the
         // `Mcp-Session-Id` their transport expects.

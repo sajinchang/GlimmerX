@@ -22,7 +22,7 @@ const TRUST_MODES: { value: McpTrustMode; labelKey: string }[] = [
 ];
 
 /**
- * The "automation" section of the settings page (design doc 25, §8.1).
+ * The "automation" section of the settings page (design doc 11, §8.1).
  *
  * The MCP server exposes the ledger to external agents over loopback HTTP
  * with a Bearer token, so every control here is a security decision: the

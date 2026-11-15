@@ -1,4 +1,4 @@
-//! Account reference resolution (design doc 25, §10.3).
+//! Account reference resolution (design doc 11, §10.3).
 //!
 //! Replaces the old `commands::ai::resolve_source_account` behaviour where a
 //! failed match silently fell back to a default account — the single biggest

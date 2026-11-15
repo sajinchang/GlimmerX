@@ -1,4 +1,4 @@
-//! Types of the ledger capability layer (design doc 25, §3).
+//! Types of the ledger capability layer (design doc 11, §3).
 //!
 //! Everything that crosses this boundary is either a plain view (read) or an
 //! explicit request (write). Amounts are integer cents; account references may
@@ -37,7 +37,7 @@ impl RecordKind {
 
 /// Reference to an account by id or by name.
 ///
-/// [`AccountRef::Name`] resolution follows the four rules in design doc 25
+/// [`AccountRef::Name`] resolution follows the four rules in design doc 11
 /// (§10.3): exact case-insensitive hit; unique contains hit with a warning;
 /// ambiguous or missing names are errors. There is no default-account
 /// fallback.
@@ -103,7 +103,7 @@ pub struct LedgerOutcome {
     pub warnings: Vec<String>,
 }
 
-/// Request to create an account (design doc 25, §3.2 / §5.3).
+/// Request to create an account (design doc 11, §3.2 / §5.3).
 ///
 /// `path` is a hierarchical path like `Assets/支付宝`; the first segment
 /// decides the account type, so no separate `kind` field exists — a caller

@@ -22,20 +22,35 @@ function detectLanguage(): SupportedLanguage {
   return "en";
 }
 
+const initialLanguage = detectLanguage();
+
 i18n.use(initReactI18next).init({
   resources: {
     en: { translation: en },
     zh: { translation: zh },
   },
-  lng: detectLanguage(),
+  lng: initialLanguage,
   fallbackLng: "en",
   interpolation: {
     escapeValue: false,
   },
 });
 
+/**
+ * Keep `<html lang>` in step with the UI language: screen readers, spell
+ * checking and `:lang()` selectors all read it, and `index.html` can only
+ * hard-code one value.
+ */
+function syncDocumentLang(lng: string) {
+  document.documentElement.lang = lng.startsWith("zh") ? "zh" : "en";
+}
+
+syncDocumentLang(initialLanguage);
+i18n.on("languageChanged", syncDocumentLang);
+
 export function setLanguage(lng: SupportedLanguage) {
   localStorage.setItem(STORAGE_KEY, lng);
+  syncDocumentLang(lng);
   i18n.changeLanguage(lng);
   // Backend error messages are localized too; ignore failures outside Tauri.
   void setUiLanguage(lng).catch(() => {});

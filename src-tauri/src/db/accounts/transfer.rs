@@ -14,7 +14,7 @@ use super::validate::validate_endpoint;
 ///
 /// Legacy entry: this path hardcodes `today_date()` and takes raw cents. New
 /// callers — the AI path and the ledger capability layer — must go through
-/// quick-add instead, which supports a business date (design doc 25, P0-4).
+/// quick-add instead, which supports a business date (design doc 11, P0-4).
 pub fn create_transfer(
     conn: &Connection,
     from_id: &str,

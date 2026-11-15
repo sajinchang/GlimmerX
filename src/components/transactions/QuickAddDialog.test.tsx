@@ -73,7 +73,7 @@ describe("QuickAddDialog review variant", () => {
     // Review title, not the blank-create title.
     expect(screen.getByText("修改这一笔")).toBeInTheDocument();
 
-    // The reset effects must NOT wipe the prefill (design doc 25, P2-5).
+    // The reset effects must NOT wipe the prefill (design doc 11, P2-5).
     await waitFor(() => {
       const amount = screen.getByLabelText(/金额|Amount/) as HTMLInputElement;
       expect(amount.value).toBe("18.00");

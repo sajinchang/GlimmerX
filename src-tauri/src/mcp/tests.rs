@@ -93,7 +93,7 @@ fn parse_reply(text: &str) -> serde_json::Value {
 }
 
 /// Post one JSON-RPC request as a 2026-07-28 client: the version header plus
-/// the per-request `_meta` the strict server now demands (design doc 25, §5.5).
+/// the per-request `_meta` the strict server now demands (design doc 11, §5.5).
 async fn call(
     client: &reqwest::Client,
     url: &str,
@@ -375,7 +375,7 @@ async fn test_locked_ledger_reports_locked() {
 async fn test_legacy_client_can_initialize_and_call() {
     // WorkBuddy and friends still open with `initialize` and expect a session
     // id. Served through the legacy session path; 2026-07-28 clients stay
-    // stateless (design doc 25, §5.5).
+    // stateless (design doc 11, §5.5).
     let (app, _dir) = setup_app("readonly", 19509);
     let client = client();
     let url = "http://127.0.0.1:19509/mcp".to_string();

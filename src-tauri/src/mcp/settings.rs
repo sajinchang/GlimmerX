@@ -1,4 +1,4 @@
-//! MCP server settings (design doc 25, §8.1).
+//! MCP server settings (design doc 11, §8.1).
 //!
 //! All four keys live in the encrypted `settings` table, so they are only
 //! readable while the ledger is unlocked — which is also when the server
@@ -16,12 +16,12 @@ pub const KEY_PORT: &str = "mcp.port";
 pub const KEY_TOKEN: &str = "mcp.token";
 pub const KEY_TRUST: &str = "mcp.trust";
 /// Whether the agent may create accounts. Off by default: an account is not
-/// cheaply undoable once postings point at it (design doc 25, §4.3).
+/// cheaply undoable once postings point at it (design doc 11, §4.3).
 pub const KEY_ALLOW_CREATE_ACCOUNT: &str = "mcp.allow_create_account";
 
 pub const DEFAULT_PORT: u16 = 17823;
 
-/// Trust tier for MCP write tools (design doc 25, §5.4).
+/// Trust tier for MCP write tools (design doc 11, §5.4).
 ///
 /// Two tiers only. The old `confirm` tier asked the user through a Tauri event,
 /// which is an out-of-band channel no MCP client can answer — an external agent

@@ -1,4 +1,4 @@
-//! Idempotency for MCP write tools (design doc 25, §6).
+//! Idempotency for MCP write tools (design doc 11, §6).
 //!
 //! An agent that retries must not book the same expense twice. A caller-supplied
 //! key makes a write run at most once: the first call claims the key, the write

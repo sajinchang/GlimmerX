@@ -1,5 +1,5 @@
 //! MCP-related commands: the settings UI and the runtime status that backs it
-//! (design doc 25, §5.4 / §8.1).
+//! (design doc 11, §5.4 / §8.1).
 
 use std::sync::Arc;
 
@@ -25,7 +25,7 @@ pub struct McpConfigDto {
     /// Why the server is not running, when the last start attempt failed.
     pub runtime_error: Option<String>,
     pub trust_mode: String,
-    /// Whether the agent may call `create_account` (design doc 25, §4.3).
+    /// Whether the agent may call `create_account` (design doc 11, §4.3).
     pub allow_create_account: bool,
     pub token: String,
 }

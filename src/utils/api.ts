@@ -734,7 +734,7 @@ export async function savingsDelete(id: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// MCP commands (design doc 25, §5/§8)
+// MCP commands (design doc 11, §5/§8)
 // ---------------------------------------------------------------------------
 
 export async function mcpGetConfig(): Promise<McpConfig> {

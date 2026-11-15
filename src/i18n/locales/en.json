@@ -501,6 +501,7 @@
     "invalidDateFormat": "Invalid date format. Use YYYY-MM-DD.",
     "invalidDateValue": "Invalid date",
     "invalidDatabasePath": "Not a database file path",
+    "invalidCategoryType": "Invalid category type",
     "invalidYearMonth": "Invalid month",
     "transaction": {
       "amountTooSmall": "Amount is too small. Minimum amount is 0.01.",

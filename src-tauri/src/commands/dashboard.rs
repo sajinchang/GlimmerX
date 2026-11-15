@@ -64,11 +64,8 @@ pub async fn dashboard_category_breakdown(
     let category_type = match category_type.as_deref() {
         Some("income") => CategoryType::Income,
         Some("expense") | None => CategoryType::Expense,
-        Some(other) => {
-            return Err(format!(
-                "Invalid category_type: '{}'. Must be 'income' or 'expense'.",
-                other
-            ))
+        Some(_) => {
+            return Err(crate::errors::message("errors.invalidCategoryType").to_string());
         }
     };
 
@@ -291,7 +288,7 @@ mod ipc_tests {
             serde_json::json!({ "year": 2024, "month": 1, "categoryType": "invalid" }),
         )
         .expect_err("invalid category type must fail");
-        assert!(err.as_str().unwrap().contains("Invalid category_type"));
+        assert!(err.as_str().unwrap().contains("分类类型无效"));
     }
 
     #[test]

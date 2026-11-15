@@ -41,7 +41,7 @@ import { useHeaderActions } from "@/contexts/HeaderContext";
 // ---------------------------------------------------------------------------
 
 // Balance-sheet only: income/expense accounts are the mirror of a category and
-// are managed from the categories page (see design doc 21, decision 1).
+// are managed from the categories page (see design doc 09, decision 1).
 const TAB_ICONS: Record<string, typeof Wallet | null> = {
   all: null,
   asset: Wallet,

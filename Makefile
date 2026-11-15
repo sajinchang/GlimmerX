@@ -134,6 +134,12 @@ check:
 	else \
 		python tools/gen_error_messages.py --check; \
 	fi
+	@echo "→ Docs check..."
+	if command -v python3 >/dev/null 2>&1; then \
+		python3 tools/check_docs.py; \
+	else \
+		python tools/check_docs.py; \
+	fi
 	@echo "→ TypeScript type check..."
 	npx tsc --noEmit
 	@echo "→ ESLint check..."
@@ -151,7 +157,7 @@ check:
 build:
 	npx tauri build
 
-# `bundle` is kept as an alias because AGENTS.md refers to it.
+# `bundle` is kept as an alias for `release` (older notes used that name).
 bundle: release
 
 # ── Release (安装版) ─────────────────────────────────────────────

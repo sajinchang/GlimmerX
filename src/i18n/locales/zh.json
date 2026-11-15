@@ -501,6 +501,7 @@
     "invalidDateFormat": "日期格式无效。请使用 YYYY-MM-DD 格式。",
     "invalidDateValue": "日期无效",
     "invalidDatabasePath": "无效的数据库文件路径",
+    "invalidCategoryType": "分类类型无效",
     "invalidYearMonth": "月份无效",
     "transaction": {
       "amountTooSmall": "金额太小。最小金额为 0.01。",

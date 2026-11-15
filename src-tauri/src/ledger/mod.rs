@@ -1,4 +1,4 @@
-//! The ledger capability layer (design doc 25, §3 / §10.3).
+//! The ledger capability layer (design doc 11, §3 / §10.3).
 //!
 //! The single write entry into the book. Three disciplines, enforced in
 //! review:

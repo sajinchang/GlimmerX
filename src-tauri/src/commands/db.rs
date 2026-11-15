@@ -40,7 +40,7 @@ fn path_label(path: &std::path::Path) -> String {
 // Tauri Commands
 // ---------------------------------------------------------------------------
 
-/// Finished idempotency claims are disposable (design doc 25, §6): they only
+/// Finished idempotency claims are disposable (design doc 11, §6): they only
 /// answer "did this key already run", and a month of history is far more than
 /// any retry window. Doing it on unlock keeps the table bounded without a
 /// background job or a schema change.

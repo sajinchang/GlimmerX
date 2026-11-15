@@ -1,4 +1,4 @@
-//! The seam between the MCP server and the Tauri app (design doc 25, §5.1).
+//! The seam between the MCP server and the Tauri app (design doc 11, §5.1).
 //!
 //! The server runs in-process, but `AppHandle<Wry>` cannot be constructed in
 //! tests. Everything the server needs from the app is therefore funnelled

@@ -1,114 +1,51 @@
-# GlimmerX - 项目设计文档
+# GlimmerX 设计文档
 
-> v1.1 | 2026-04-12 | 模块化文档（按需加载子文档）
+> v2.1 | 2026-11-15 | 12 篇，按主题组织；已落地能力不再保留方案论证过程。
 
-**GlimmerX** 是一款基于 Tauri + React 构建的跨平台个人复式记账桌面应用。
+**GlimmerX** 是基于 Tauri 2 + React 19 的跨平台个人复式记账桌面应用。
 核心理念：**本地优先、数据私有、复式记账、简洁高效**。
 
----
+## 核心不变量
+
+先读这六条，再按需查文档——所有设计都以它们为前提：
+
+1. **分录是唯一真相**：交易只存日期与描述，类型/分类/余额全部由 `postings` 派生。
+2. **借贷必须平衡**：同一交易 `SUM(postings.amount) = 0`（`i128` 求和）。
+3. **金额是整数分**，解析与计算只在 Rust 后端；前端只格式化与展示。
+4. **分类与损益账户 1:1**：`categories.account_id` 显式绑定，账本从不按名字反查分类。
+5. **余额不落库**：一律由分录聚合，报表与列表共享同一口径。
+6. **每个分类只属于损益**：转账在资产/负债账户之间，不带分类。
 
 ## 文档索引
 
-按阅读场景组织，点击跳转子文档。
+| 文档 | 内容 | 何时阅读 |
+| --- | --- | --- |
+| [01-overview](design/01-overview.md) | 定位、技术栈、概念模型、功能范围与里程碑 | 初次了解项目、确认边界 |
+| [02-data-model](design/02-data-model.md) | 表结构、索引、派生对象、迁移规则 | 改数据库、写查询 |
+| [03-api](design/03-api.md) | Tauri 命令索引、IPC 约定、错误处理 | 加命令、查命令用途 |
+| [04-frontend](design/04-frontend.md) | 页面清单、交互约定、首页结构、国际化 | 改 UI、加页面 |
+| [05-constraints](design/05-constraints.md) | 金额/日期约束、加密会话、代码规范、改动影响面、测试与构建 | 提交前、搭环境 |
+| [06-risks](design/06-risks.md) | 平台与数据风险 | 评估取舍 |
+| [07-transactions](design/07-transactions.md) | 交易分层、数据结构、分录推导、验证规则、事务边界 | 做交易相关功能 |
+| [08-transaction-list](design/08-transaction-list.md) | 列表查询与筛选、分页与虚拟滚动、详情、编辑、删除 | 改列表/详情页 |
+| [09-double-entry](design/09-double-entry.md) | 复式记账决策记录：对账、储蓄目标、单币种、硬删除、schema 演进 | 理解模型地基、查"为什么" |
+| [10-reports](design/10-reports.md) | 六张报表的口径、URL 筛选、ECharts 约定 | 改报表/图表 |
+| [11-ai-mcp](design/11-ai-mcp.md) | 能力层、内部 AI 提案流、MCP 服务、幂等、Skill | 做 AI 与 agent 接入 |
+| [12-ui-system](design/12-ui-system.md) | 令牌三层、语义色、四套预设、字体字阶、图表色板、打印 | 改样式、调主题 |
 
-### 快速上手
+外部文档：
 
-| 文档                                 | 内容                                 | 何时阅读          |
-| ------------------------------------ | ------------------------------------ | ----------------- |
-| [01-overview](design/01-overview.md) | 项目概述、设计哲学、技术栈、项目边界 | 初次了解项目      |
-| [02-roadmap](design/02-roadmap.md)   | 开发计划（5 个 Phase）               | 了解进度/规划工作 |
-
-### 核心设计
-
-| 文档                                         | 内容                                         | 何时阅读          |
-| -------------------------------------------- | -------------------------------------------- | ----------------- |
-| [03-concepts](design/03-concepts.md)         | 复式记账模型、账户体系、预算模型、分类       | 理解业务概念      |
-| [04-requirements](design/04-requirements.md) | 功能需求清单（ACC/TXN/CAT/BUD/RPT/DATA/SET） | 开发前确认范围    |
-| [05-data-model](design/05-data-model.md)     | SQL 表结构、TypeScript 类型定义              | 写数据库/前端类型 |
-
-### 交易模块（Phase 2 核心）
-
-> **关键设计决策**: 本系统采用**纯自由复式记账**，不存储交易类型标识（transaction_type）。
-> 快速记账的"支出/收入/转账"仅用于 UI 层推导 Posting，不存储到数据库。
-> 前端禁用 React Query 缓存（staleTime: 0, gcTime: 0），所有金额计算由后端执行。
-
-| 文档                                                               | 内容                                                    | 何时阅读               |
-| ------------------------------------------------------------------ | ------------------------------------------------------- | ---------------------- |
-| [14-transaction-module](design/14-transaction-module.md)           | 交易模块架构、流程模式、实现状态                        | 理解交易系统设计       |
-| [15-transaction-create](design/15-transaction-create.md)           | 交易创建流程详细设计（数据结构、验证逻辑、API、测试）   | 实现交易创建功能       |
-| [16-transaction-quick-add](design/16-transaction-quick-add.md)     | 快速记账模式设计（UI层Posting推导、分类映射、前端弹窗） | 实现快速记账功能       |
-| [17-transaction-list](design/17-transaction-list.md)               | 交易列表设计（数据结构、过滤搜索、分页分组、前端页面）  | 实现交易列表页面       |
-| [18-transaction-detail-edit](design/18-transaction-detail-edit.md) | 交易详情与编辑设计（详情页、编辑表单、删除确认）        | 实现交易详情和编辑删除 |
-| [21-double-entry-upgrade](design/21-double-entry-upgrade.md)       | schema v2：分类账户 1:1、对账、储蓄目标、单币种、硬删除 | 实施 v2 能力升级       |
-| [22-visual-system](design/22-visual-system.md)                     | 视觉系统：令牌层、字体、语义色、图表色板、密度与首页结构 | 改 UI 前必读           |
-| [23-tech-surface-research](design/23-tech-surface-research.md)  | 科技感调研、六维审查、Calibrated Instrument 与落地记录 | 改首页/材质前必读     |
-| [24-reports](design/24-reports.md)  | 报表 9→6 的取舍、URL 筛选、ECharts 迁移、两张新报表的口径 | 改报表/图表前必读 |
-
----
-
-## 参考文档
-
-| 文档                                     | 内容                                  | 何时阅读       |
-| ---------------------------------------- | ------------------------------------- | -------------- |
-| [09-testing](design/09-testing.md)       | 测试策略、覆盖率要求、重点用例        | 编写测试       |
-| [10-build](design/10-build.md)           | 开发/构建命令、CI/CD、Makefile 工具链 | 构建/部署/发布 |
-| [11-risks](design/11-risks.md)           | 技术风险与应对                        | 评估技术决策   |
-| [12-references](design/12-references.md) | 参考项目列表                          | 灵感/对比学习  |
-
-### 错误处理
-
-| 文档                             | 内容                               | 何时阅读     |
-| -------------------------------- | ---------------------------------- | ------------ |
-| [13-errors](design/13-errors.md) | 后端错误类型定义、前端错误展示策略 | 实现错误处理 |
-
-### 报表模块（Phase 4 核心）
-
-> **架构**: 单页面 + 下拉选择器切换报表，共用顶部过滤器（日期范围、时间粒度、账户/分类筛选）。
-> 已实现 9 个报表（P0: 4个, P1: 4个, P2: 1个）。
-> **注意**: 预算执行报告属于预算模块，不在报表模块中（通过 `report_budget_execution` API 访问）。
-
-| 内部 ID            | 名称           | 主要内容                                       | 优先级 |
-| ------------------ | -------------- | ---------------------------------------------- | ------ |
-| `standard`         | 标准财务报表   | 收入支出汇总 + 净资产趋势 + 账户余额变化       | P0     |
-| `category`         | 分类分析报告   | 按分类聚合收支 + 饼图                          | P0     |
-| `balanceSheet`     | 资产负债表     | 资产/负债/净资产快照                           | P0     |
-| `trend`            | 收支趋势图     | 多时间粒度（日/周/月/年）趋势图                | P0     |
-| `monthComparison`  | 月度对比报告   | 两月收支对比 + 差异分析                        | P1     |
-| `yearSummary`      | 年度汇总报告   | 全年收支分解 + 按月聚合                        | P1     |
-| `accountTransactions` | 账户交易报告   | 单账户交易明细 + 分页                          | P1     |
-| `accountBalanceTrend` | 账户余额趋势   | 单账户余额历史折线图                           | P1     |
-| `audit`            | 审计报告       | 交易验证 + 账户对账状态 + 异常检测             | P2     |
-
-### 数据管理模块（Phase 5）
-
-> **架构**: 设置页面的"数据管理"区块**只保留数据库备份**。
-> CSV / Beancount 导入导出已于 2026-11-13 下线（单币种 + 硬删除决策的连带结果），
-> 历史设计存档见 [19-data-export](design/19-data-export.md) / [20-data-import](design/20-data-import.md)。
-
-| 功能 | ID | 优先级 | 说明 |
-|---|---|---|---|
-| 数据库备份 | DATA-4 | P0 | 一键复制加密数据库文件到用户指定位置 ✅ |
-| CSV 导出 | DATA-1 | — | 已下线（2026-11-13 移除代码） ❌ |
-| Beancount 导出 | DATA-3 | — | 已下线（2026-11-13 移除代码） ❌ |
-| CSV 导入 | DATA-2 | — | 已下线（2026-11-13 移除代码） ❌ |
-
----
+- [AGENTS.md](../AGENTS.md) —— 给 AI 编码助手的文档入口与硬规则（数据库变更需确认、错误文案只在后端等）。
+- [src-tauri/AGENTS.md](../src-tauri/AGENTS.md) —— Rust 后端模块地图、事务边界与测试约定。
+- [skills/glimmerx-ledger/SKILL.md](../skills/glimmerx-ledger/SKILL.md) —— 给外部 agent 的账本操作手册。
+- [BACKLOG.md](BACKLOG.md) —— 未决事项与"决策过的否定"；查"还有什么没做"看这里。
 
 ## 项目快照
 
+```text
+技术栈: Tauri 2 + React 19 + TypeScript + SQLCipher + Tailwind 4 + shadcn/ui
+阶段:   核心功能完成（账户/交易/分类/预算/储蓄/对账/报表/AI/MCP）
+语言:   中文、英文
+平台:   Windows / macOS / Linux
+schema: v3（v1 冻结，变更只能新增 vN）
 ```
-技术栈: Tauri 2 + React 19 + TypeScript + SQLCipher + shadcn/ui
-当前阶段: Phase 4（账户、交易、Dashboard、预算、报表核心功能已完成）
-支持语言: 中文、英文
-目标平台: Windows / macOS / Linux
-```
-
-> **更新日期**: 2026-04-26
-> **实现状态**:
-> - ACC-1~ACC-10 账户管理 ✅ 已实现
-> - TXN-1~TXN-6 交易核心 ✅ 已实现
-> - CAT-1 分类管理 ✅ 已实现
-> - BUD-1~BUD-4 预算管理 ✅ P0/P1 已实现（含预算执行报告）
-> - DASH-1~DASH-15 概览模块 ✅ P0/P1 已实现，P2 预留
-> - RPT 报表分析 ✅ 6 张报表（2026-11-14 由 9 张合并而来，审计移入设置）
-> - DATA 数据管理 ✅ 仅保留数据库备份（导入导出已于 2026-11-13 下线）

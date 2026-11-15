@@ -4,7 +4,7 @@ mod commands;
 mod constants;
 mod db;
 mod errors;
-// The MCP server (design doc 25, §5): rmcp types are confined to this
+// The MCP server (design doc 11, §5): rmcp types are confined to this
 // module; nothing here leaks into `commands/` (which only sees plain DTOs)
 // or `db/`.
 pub mod ledger;

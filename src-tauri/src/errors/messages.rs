@@ -103,6 +103,8 @@ pub fn lookup(lang: Lang, key: &str) -> Option<&'static str> {
         (Lang::En, "databaseLocked") => Some("Database is locked. Please unlock it first"),
         (Lang::Zh, "databaseOpenFailed") => Some("无法打开数据库文件"),
         (Lang::En, "databaseOpenFailed") => Some("Could not open the database file"),
+        (Lang::Zh, "invalidCategoryType") => Some("分类类型无效"),
+        (Lang::En, "invalidCategoryType") => Some("Invalid category type"),
         (Lang::Zh, "invalidDatabasePath") => Some("无效的数据库文件路径"),
         (Lang::En, "invalidDatabasePath") => Some("Not a database file path"),
         (Lang::Zh, "invalidDateFormat") => Some("日期格式无效。请使用 YYYY-MM-DD 格式。"),

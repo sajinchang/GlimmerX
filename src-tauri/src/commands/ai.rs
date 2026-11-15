@@ -60,7 +60,7 @@ fn build_ai_context(conn: &rusqlite::Connection) -> Result<AiContext, AppError> 
 }
 
 // ---------------------------------------------------------------------------
-// Proposal resolution (design doc 25, §4.2 — propose only, never write)
+// Proposal resolution (design doc 11, §4.2 — propose only, never write)
 // ---------------------------------------------------------------------------
 
 /// An account the proposal resolved to, with the id the confirm step needs.

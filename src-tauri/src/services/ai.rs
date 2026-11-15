@@ -93,7 +93,7 @@ pub(crate) struct AiContext {
     pub asset_accounts: Vec<String>,
 }
 
-/// Raw parsed proposal from the AI JSON response (design doc 25, §4.1).
+/// Raw parsed proposal from the AI JSON response (design doc 11, §4.1).
 ///
 /// Discriminated by `action`; the fields only apply to some actions:
 /// - expense/income: `amount`, `category_name`, one account, `date`
@@ -218,7 +218,7 @@ fn extract_json_from_content(content: &str) -> Option<String> {
 // Prompt construction
 // ---------------------------------------------------------------------------
 
-/// Build the system prompt with context injected (design doc 25, §4.1).
+/// Build the system prompt with context injected (design doc 11, §4.1).
 ///
 /// The prompt asks for a single action-discriminated proposal. The AI only
 /// proposes; the app resolves names, shows a confirmation card, and writes.

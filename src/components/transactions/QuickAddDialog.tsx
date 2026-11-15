@@ -62,7 +62,7 @@ interface QuickAddDialogProps {
   /**
    * "create" (default): blank form on open.
    * "review": prefilled from an AI proposal and used as the edit form behind
-   * the AI receipt (design doc 25, §4.2). The write already happened, so with
+   * the AI receipt (design doc 11, §4.2). The write already happened, so with
    * `replaceId` set the submit replaces that transaction instead of adding one.
    * Requires `initial` when set.
    */
@@ -660,7 +660,7 @@ export function QuickAddDialog({
             )}
 
             {/* Replacing deletes the original row; saying so is the only
-                warning the user gets (design doc 25, §4.2). */}
+                warning the user gets (design doc 11, §4.2). */}
             {replaceId && (
               <p className="text-xs text-muted-foreground">
                 {t("ai.review.replaceHint")}

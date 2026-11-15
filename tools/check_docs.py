@@ -3,8 +3,10 @@
 
 Checks:
 1. Every package named in the 01-overview stack table exists in package.json.
-2. The accounts column count in 08-constraints matches schema_v1.sql, and the
+2. The accounts column count in 05-constraints matches schema_v1.sql, and the
    section does not describe columns that do not exist.
+3. Every `errors.*` key quoted in docs/design/*.md exists in both locale files —
+   the doc tables are the contract, the copy itself stays in the locales.
 
 Run from the repository root: `python tools/check_docs.py`
 """
@@ -19,8 +21,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 PACKAGE_JSON = ROOT / "package.json"
 OVERVIEW = ROOT / "docs" / "design" / "01-overview.md"
-CONSTRAINTS = ROOT / "docs" / "design" / "08-constraints.md"
+CONSTRAINTS = ROOT / "docs" / "design" / "05-constraints.md"
 SCHEMA = ROOT / "src-tauri" / "src" / "db" / "schema_v1.sql"
+DESIGN_DIR = ROOT / "docs" / "design"
+LOCALES = {
+    lang: ROOT / "src" / "i18n" / "locales" / f"{lang}.json"
+    for lang in ("zh", "en")
+}
 
 errors: list[str] = []
 
@@ -83,16 +90,16 @@ def check_accounts_section() -> None:
     text = CONSTRAINTS.read_text(encoding="utf-8")
     section = text.split("## accounts 表设计", 1)
     if len(section) != 2:
-        errors.append("08-constraints.md 缺少「## accounts 表设计」小节")
+        errors.append("05-constraints.md 缺少「## accounts 表设计」小节")
         return
     body = section[1].split("\n## ", 1)[0]
 
     claimed = re.search(r"当前\s*(\d+)\s*列", body)
     if not claimed:
-        errors.append("08-constraints.md 未声明 accounts 列数（应写「当前 N 列」）")
+        errors.append("05-constraints.md 未声明 accounts 列数（应写「当前 N 列」）")
     elif int(claimed.group(1)) != len(columns):
         errors.append(
-            f"08-constraints.md 写 accounts 为 {claimed.group(1)} 列，"
+            f"05-constraints.md 写 accounts 为 {claimed.group(1)} 列，"
             f"schema_v1.sql 实际为 {len(columns)} 列"
         )
 
@@ -104,19 +111,48 @@ def check_accounts_section() -> None:
             if "没有" in line or "不存在" in line:
                 continue
             errors.append(
-                f"08-constraints.md 描述了 accounts.{field}，但 schema_v1.sql 中不存在该列"
+                f"05-constraints.md 描述了 accounts.{field}，但 schema_v1.sql 中不存在该列"
             )
+
+
+def has_key(data: dict, dotted: str) -> bool:
+    node: object = data
+    for part in dotted.split("."):
+        if not isinstance(node, dict) or part not in node:
+            return False
+        node = node[part]
+    return True
+
+
+def check_error_keys() -> None:
+    locales = {
+        lang: json.loads(path.read_text(encoding="utf-8"))
+        for lang, path in LOCALES.items()
+    }
+    for md in sorted(DESIGN_DIR.glob("*.md")):
+        text = md.read_text(encoding="utf-8")
+        for raw in sorted(set(re.findall(r"`(errors\.[A-Za-z0-9_.<>*]+)`", text))):
+            # `errors.*` / `errors.ai.<code>` describe a shape, not a literal key.
+            if any(ch in raw for ch in "<>*"):
+                continue
+            key = raw.rstrip(".")
+            for lang, data in locales.items():
+                if not has_key(data, key):
+                    errors.append(
+                        f"{md.name} 引用的错误键在 {lang}.json 中不存在: {raw}"
+                    )
 
 
 def main() -> int:
     check_stack_packages()
     check_accounts_section()
+    check_error_keys()
     if errors:
         print("文档校验失败：")
         for err in errors:
             print(f"  - {err}")
         return 1
-    print("文档校验通过：技术栈依赖与 accounts 表结构均与代码一致")
+    print("文档校验通过：技术栈依赖、accounts 表结构与错误键均与代码一致")
     return 0
 
 

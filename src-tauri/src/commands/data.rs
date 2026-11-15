@@ -1,7 +1,7 @@
 //! Data management commands.
 //!
 //! Only database backup lives here. Transaction import/export was removed on
-//! 2026-11-13 (see `docs/design/21-double-entry-upgrade.md` §7): the product is
+//! 2026-11-13 (see `docs/design/09-double-entry.md` §7): the product is
 //! single-currency and hard-delete, so a CSV round-trip no longer carries enough
 //! meaning to justify the maintenance cost. The database backup stays because it
 //! is the safety net before migrations.

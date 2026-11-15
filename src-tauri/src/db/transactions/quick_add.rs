@@ -19,7 +19,7 @@ use super::validate::validate_quick_add_input;
 ///
 /// The category comes from `input.category_name` (type derived from `mode`),
 /// or `input.category_id` when the caller already resolved one. The AI path
-/// (design doc 25, §4.2) now proposes without writing, so the explicit
+/// (design doc 11, §4.2) now proposes without writing, so the explicit
 /// category argument of the old `quick_add_with_category` is gone.
 pub fn quick_add_transaction(
     conn: &Connection,
@@ -34,7 +34,7 @@ pub fn quick_add_transaction(
 /// Replace an existing transaction with a fresh one derived from the same
 /// semantic input, in a single transaction.
 ///
-/// This is the AI edit path (design doc 25, §4.2): the user corrects the fields
+/// This is the AI edit path (design doc 11, §4.2): the user corrects the fields
 /// on the receipt, and the backend re-derives postings instead of trusting a
 /// client-built entry list. Deleting and re-creating inside one transaction is
 /// what keeps a failed re-create from losing the original.
@@ -175,7 +175,7 @@ fn derive_postings(
             }
 
             // Same endpoint rule as `db::accounts::transfer::create_transfer`
-            // (design doc 25, P0-2): both endpoints must be active
+            // (design doc 11, P0-2): both endpoints must be active
             // asset/liability accounts. Without this, a transfer whose
             // endpoint is an expense account would create money out of a
             // P&L category.

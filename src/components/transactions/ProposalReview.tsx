@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 import { AlertTriangle } from "lucide-react";
 
 /**
- * The proposal summary shown on the AI receipt (design doc 25, §4.2).
+ * The proposal summary shown on the AI receipt (design doc 11, §4.2).
  *
  * Since the entry is written before this renders, the block is no longer a
  * "check before saving" gate — it is the record of what the AI decided, next to

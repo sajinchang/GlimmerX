@@ -37,7 +37,7 @@ SELECT id, category_id, datetime('now')
 
 ALTER TABLE transactions DROP COLUMN category_id;
 
--- Idempotency for MCP write tools (design doc 25, §6).
+-- Idempotency for MCP write tools (design doc 11, §6).
 --
 -- A caller-supplied key makes a write run at most once. This is *not* an audit
 -- log: it stores no request payload and no actor, only enough state to answer

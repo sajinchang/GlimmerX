@@ -1,4 +1,4 @@
-//! Read capabilities (design doc 25, §3.1).
+//! Read capabilities (design doc 11, §3.1).
 //!
 //! Thin views over the existing `db::` layer — no SQL here, no aggregation
 //! re-implementation. `period_summary` reuses `db::reports` so the capability

@@ -27,6 +27,22 @@ describe("i18n configuration", () => {
     });
   });
 
+  describe("document language", () => {
+    it("corrects the hard-coded <html lang> at startup", () => {
+      // setupTests pins navigator.language to "zh-CN" and localStorage is empty,
+      // so the module must have replaced index.html's `lang="en"`.
+      expect(document.documentElement.lang).toBe("zh");
+    });
+
+    it("mirrors UI language changes onto <html lang>", () => {
+      setLanguage("en");
+      expect(document.documentElement.lang).toBe("en");
+
+      setLanguage("zh");
+      expect(document.documentElement.lang).toBe("zh");
+    });
+  });
+
   describe("getCurrentLanguage", () => {
     it("returns the current language after setLanguage", () => {
       setLanguage("en");
