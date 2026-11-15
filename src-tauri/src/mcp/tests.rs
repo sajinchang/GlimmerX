@@ -62,6 +62,36 @@ async fn wait_up(client: &reqwest::Client, url: &str, token: &str) -> reqwest::R
     panic!("MCP server never came up at {url}");
 }
 
+/// Loopback HTTP client for the integration tests.
+///
+/// `no_proxy()` is deliberate: a developer or CI machine with `HTTP_PROXY` set
+/// would otherwise send these 127.0.0.1 requests through it and every
+/// assertion here would see the proxy's 502 instead of our server.
+fn client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .expect("client")
+}
+
+/// Read a JSON-RPC reply that may arrive as plain JSON or as an SSE frame
+/// (`data: {...}`) — legacy sessions answer in SSE even with `json_response`.
+fn parse_reply(text: &str) -> serde_json::Value {
+    let trimmed = text.trim();
+    if trimmed.starts_with('{') {
+        return serde_json::from_str(trimmed).unwrap_or_else(|e| panic!("json body: {e}: {text}"));
+    }
+    for line in trimmed.lines() {
+        if let Some(payload) = line.strip_prefix("data:") {
+            if payload.trim_start().starts_with('{') {
+                return serde_json::from_str(payload.trim())
+                    .unwrap_or_else(|e| panic!("sse body: {e}: {text}"));
+            }
+        }
+    }
+    panic!("no JSON-RPC payload in response: {text}");
+}
+
 /// Post one JSON-RPC request as a 2026-07-28 client: the version header plus
 /// the per-request `_meta` the strict server now demands (design doc 25, §5.5).
 async fn call(
@@ -141,7 +171,7 @@ fn token_of(app: &tauri::App<tauri::test::MockRuntime>) -> String {
 #[tokio::test]
 async fn test_unauthorized_without_token() {
     let (app, _dir) = setup_app("readonly", 19501);
-    let client = reqwest::Client::new();
+    let client = client();
     let url = "http://127.0.0.1:19501/mcp".to_string();
     wait_up(&client, &url, &token_of(&app)).await;
 
@@ -159,7 +189,7 @@ async fn test_unauthorized_without_token() {
 #[tokio::test]
 async fn test_tools_list_and_reads() {
     let (app, _dir) = setup_app("readonly", 19502);
-    let client = reqwest::Client::new();
+    let client = client();
     let url = "http://127.0.0.1:19502/mcp".to_string();
     let token = token_of(&app);
     wait_up(&client, &url, &token).await;
@@ -234,7 +264,7 @@ async fn test_tools_list_and_reads() {
 #[tokio::test]
 async fn test_readonly_rejects_writes() {
     let (app, _dir) = setup_app("readonly", 19503);
-    let client = reqwest::Client::new();
+    let client = client();
     let url = "http://127.0.0.1:19503/mcp".to_string();
     let token = token_of(&app);
     wait_up(&client, &url, &token).await;
@@ -267,7 +297,7 @@ async fn test_readonly_rejects_writes() {
 #[tokio::test]
 async fn test_trust_mode_writes_directly() {
     let (app, _dir) = setup_app("trust", 19504);
-    let client = reqwest::Client::new();
+    let client = client();
     let url = "http://127.0.0.1:19504/mcp".to_string();
     let token = token_of(&app);
     wait_up(&client, &url, &token).await;
@@ -307,7 +337,7 @@ async fn test_trust_mode_writes_directly() {
 #[tokio::test]
 async fn test_locked_ledger_reports_locked() {
     let (app, _dir) = setup_app("trust", 19507);
-    let client = reqwest::Client::new();
+    let client = client();
     let url = "http://127.0.0.1:19507/mcp".to_string();
     let token = token_of(&app);
     wait_up(&client, &url, &token).await;
@@ -347,7 +377,7 @@ async fn test_legacy_client_can_initialize_and_call() {
     // id. Served through the legacy session path; 2026-07-28 clients stay
     // stateless (design doc 25, §5.5).
     let (app, _dir) = setup_app("readonly", 19509);
-    let client = reqwest::Client::new();
+    let client = client();
     let url = "http://127.0.0.1:19509/mcp".to_string();
     let token = token_of(&app);
     wait_up(&client, &url, &token).await;
@@ -375,7 +405,7 @@ async fn test_legacy_client_can_initialize_and_call() {
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default()
         .to_string();
-    let body: serde_json::Value = resp.json().await.expect("json body");
+    let body = parse_reply(&resp.text().await.expect("body"));
 
     assert!(status.is_success(), "initialize: {body}");
     assert!(
@@ -410,7 +440,7 @@ async fn test_legacy_client_can_initialize_and_call() {
         .send()
         .await
         .expect("tools/list");
-    let list: serde_json::Value = list.json().await.expect("json body");
+    let list = parse_reply(&list.text().await.expect("body"));
     let names = list["result"]["tools"]
         .as_array()
         .unwrap_or_else(|| panic!("tools/list failed: {list}"))
@@ -423,7 +453,7 @@ async fn test_legacy_client_can_initialize_and_call() {
 #[tokio::test]
 async fn test_resources_list_and_read() {
     let (app, _dir) = setup_app("readonly", 19510);
-    let client = reqwest::Client::new();
+    let client = client();
     let url = "http://127.0.0.1:19510/mcp".to_string();
     let token = token_of(&app);
     wait_up(&client, &url, &token).await;

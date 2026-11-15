@@ -335,30 +335,32 @@ pub struct LedgerOutcome {
 - 前端 `McpTrustMode` 类型同步收窄为 `"readonly" | "trust"`，设置页不再渲染确认项；
   否则类型允许、后端不认，会变成静默降级。
 
-### 5.5 协议版本与会话：只支持 2026-07-28
+### 5.5 协议版本与会话：双版本（2024-11-05 ~ 2026-07-28）
 
 2026-07-28 版协议删除了 session 与 `initialize` 握手（SEP-2567），核心改为无状态：
 每个请求自己携带协议版本与客户端能力。rmcp 的实现注释写得很直接——
 "requests negotiating that version are always served statelessly regardless of this setting"。
+也就是说**会话模式只作用于老版本，2026-07-28 的请求无论如何都走无状态**。
 
-一次请求需要带齐：
+**决定：声明全部五个版本**（`2024-11-05` / `2025-03-26` / `2025-06-18` / `2025-11-25` / `2026-07-28`），
+并开 `legacy_session_mode`：
 
-| 位置 | 字段 |
-| --- | --- |
-| HTTP 头 | `MCP-Protocol-Version: 2026-07-28` |
-| `params._meta` | `io.modelcontextprotocol/protocolVersion` |
-| `params._meta` | `io.modelcontextprotocol/clientCapabilities` |
+| 客户端协商到的版本 | 走的路径 | 需要带什么 |
+| --- | --- | --- |
+| `2026-07-28` | 无状态（SEP-2567） | `MCP-Protocol-Version` 头 + `_meta` 里的 `protocolVersion`、`clientCapabilities` |
+| ≤ `2025-11-25` | 传统会话：`initialize` → 拿到 `Mcp-Session-Id` → 后续请求回带 | 什么都不用额外带，与旧协议一致 |
 
-**决定：只声明 2026-07-28**，同时开 `stateless_protocol_metadata_required`。
-服务端 `supported_protocol_versions()` 只返回该版本——新版本客户端本来就不握手，
-仍按老规矩发 `initialize` 的客户端则会因版本不在白名单被拒。
+`stateless_protocol_metadata_required` 保持开启：它只作用于无状态路由（即 2026-07-28 请求），
+老客户端的会话路由有自己的一套规则，不受影响。
 
-**主动接受的后果**：仍然发 `initialize` 的老客户端（≤2025-11-25）连不上。
-rmcp 源码对此有明确警告——开了这个开关，老版本协商的普通请求会因为缺少每请求元数据被拒。
+> **这条改过一次，理由值得留着**：最初只声明 `2026-07-28`，理由是"客户端可控、双版本成本翻倍"。
+> 实测第一个真实客户端（WorkBuddy）就报 `-32022 Unsupported protocol version` —— 它仍在
+> `initialize` 里协商 `2025-11-25`。**我们可控的是自己的代码，不可控的是别人的客户端**。
+> 于是按原计划的回退路径改成双版本，代价是两条路径都要有测试：现已各有一条集成用例
+> （`test_legacy_client_can_initialize_and_call` 与其余 2026-07-28 无状态用例）。
 
-**为什么不做"双版本兼容"**：兼容模式下两套元数据规则并存（有会话/无会话、握手/无握手），
-测试、排障、文档都要乘二；而我们的客户端是完全可控的本机 agent，升级成本由自己承担。
-真需要一个老客户端时，把 `supported_protocol_versions` 放宽、关掉校验开关即可回退，代码是开关级的。
+**仍然不支持的**：协商 `2026-07-28` 却省略每请求元数据的客户端（会被 `-32602` 拒），
+以及根本不做 `initialize` 的老式实现。这两类都不是任何主流客户端的实际行为。
 
 ### 5.6 能力清单：tools + resources
 
@@ -388,9 +390,9 @@ agent 拿资源做上下文，拿工具做动作。月度报表用模板而不�
 
 | 项 | 我们的做法 | 性质 | 说明 |
 | --- | --- | --- | --- |
-| 会话 / 握手 | 只支持 2026-07-28 无状态 | **主动偏离**（拒绝老客户端） | §5.5 |
+| 会话 / 握手 | 双版本：2026-07-28 无状态 + 老版本传统会话 | **无偏差**（同时支持两套规范） | §5.5 |
 | 鉴权 | 静态 Bearer token，无 OAuth 发现 | 偏离 | 本机 loopback；支持自定义 header 的客户端可直接用，只支持 OAuth 自动发现的不行 |
-| 响应格式 | `application/json`，不用 SSE 流 | 合规（二选一） | `json_response(true)`；有通知时才回落 `text/event-stream` |
+| 响应格式 | 无状态路由回 `application/json`；老版本会话可能回 SSE 帧 | 合规（二选一） | `json_response(true)` 只保证无状态路径；集成测试两种都要会解析 |
 | 写入确认 | 协议外无确认，改用撤销 | 主动取舍 | §5.4 / §4.2 |
 | resources | 只读、不支持 `resources/subscribe` | 合规（可选能力） | 账本是本地文件，订阅没有意义 |
 | prompts / completions | 不提供 | 合规（可选能力） | §11 |
@@ -639,11 +641,11 @@ tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "sync"]
 
 | # | 任务 | 落点 |
 | --- | --- | --- |
-| P3-5 | 只协商 2026-07-28：`supported_protocol_versions` 收窄 + 开 `stateless_protocol_metadata_required`（§5.5） | `mcp/tools.rs`、`mcp/mod.rs` |
+| P3-5 | 双版本：`supported_protocol_versions` 覆盖 2024-11-05~2026-07-28 + 开 `legacy_session_mode`（老客户端要会话）+ 保持 `stateless_protocol_metadata_required`（只约束无状态路径）（§5.5） | `mcp/tools.rs`、`mcp/mod.rs` |
 | P3-6 | resources：手写 `get_info()`（`enable_resources`）+ `list_resources` / `list_resource_templates` / `read_resource`（§5.6） | `mcp/tools.rs` |
 | P3-7 | 删除确认档全套：`approval.rs`、`ApprovalSlot`、`try_stage_approval` / `emit_approval`、`McpApprovalDialog`、`mcp_approve_request` / `mcp_current_approval`、`trustConfirm` 文案；**默认档 `confirm` → `readonly`**（`Default` 与 `load_config` 的 `unwrap_or` 两处同改），前端 `McpTrustMode` 收窄（§5.4 迁移说明） | 前后端多处 |
 
-**验收**：MCP Inspector 直连（注意：只支持 2026-07-28，且需手动带 token）
+**验收**：MCP Inspector 直连（需手动带 token；Inspector 若是老版本，会走 `initialize` + 会话，也能连上）
 
 ```bash
 npx @modelcontextprotocol/inspector --cli http://127.0.0.1:17823/mcp \
@@ -655,7 +657,7 @@ npx @modelcontextprotocol/inspector --cli http://127.0.0.1:17823/mcp \
   --method resources/read --params '{"uri":"glimmerx://accounts"}'
 ```
 
-老客户端（≤2025-11-25）连不上是**预期行为**，不是故障。
+老客户端（≤2025-11-25）走传统会话，**应该连得上**——连不上才是故障，先看客户端有没有回带 `Mcp-Session-Id`。
 
 **手工验收前必读**：2026-07-28 的客户端除了 `MCP-Protocol-Version`，还必须发 SEP-2243 的
 路由头——`Mcp-Method: <方法名>`，以及 `Mcp-Name: <工具名或资源 URI>`（`tools/call` 与
@@ -699,7 +701,7 @@ npx @modelcontextprotocol/inspector --cli http://127.0.0.1:17823/mcp \
 | axum/tokio 与 Tauri 内置 runtime 冲突 | 运行时异常 | 用 `tauri::async_runtime::spawn`，不自建 runtime | 换 `tiny_http` 自己实现 Streamable HTTP 传输 |
 | 本地端口暴露给同机进程 | 越权记账 | 127.0.0.1 + 随机 token + 工具白名单 + 默认只读 | 设置页一键关停 |
 | agent 乱写账本 | 数据污染 | 默认只读；信任档下的写入可在 GlimmerX 撤销（§4.2）；`warnings` 把"我替你猜了"摊开 | 信任档默认关 |
-| 只支持 2026-07-28 导致老客户端连不上 | 用户配好了却用不了 | 报错文案写清所需版本；设置页标注 | 放宽 `supported_protocol_versions`、关掉元数据校验 |
+| 新版本严格化导致真实客户端连不上 | 用户配好了却用不了 | 已实测踩到：WorkBuddy 报 `-32022`，改为双版本（§5.5） | 仍连不上时临时降到只读档并关停 MCP |
 | 存量 `confirm` 用户升级后写操作被拒 | 以为坏了 | 设置页把"只读"标注为默认并解释原因（§5.4 迁移说明） | 用户手动切回信任档 |
 | resources 暴露余额 | 财务数据被读 | 与工具同一 Bearer 鉴权；只读、无订阅 | 设置页一键关停 MCP |
 | agent 重试 | 重复记账 | `automation_idempotency` 复合主键 `(tool, idempotency_key)`；顺序为**先门控、后幂等**（§6） | 调用方不传 key 时退化为无保护（已文档化） |
@@ -747,9 +749,9 @@ npx @modelcontextprotocol/inspector --cli http://127.0.0.1:17823/mcp \
   前端渲染和两边测试，收益只是英文用户看到英文提示。当前取舍是**保留中文并在此登记**，
   英文用户仍能看懂金额与账户名，warnings 只是补充说明。真要做，等能力层下次改返回结构时顺带。
 
-- **不支持 2026-07-28 之前的 MCP 客户端**。协议在 2026-07-28 删除了会话与握手（SEP-2567），
-  我们只声明新版本，老客户端会被拒。这是刻意的兼容性取舍：客户端可控，双版本并存会让
-  测试与排障成本翻倍（§5.5）。回退是开关级的，不算沉没成本。
+- **不承诺"只支持最新协议"**。最初打算只声明 2026-07-28，被真实客户端打回（WorkBuddy 仍在
+  `initialize` 里协商 2025-11-25，直接 `-32022`）。现在是双版本，两套路径各有一条集成用例兜住（§5.5）。
+  这条写在这里是提醒：**协议版本的"先进性"不是目标，能连上才是。**
 
 ---
 

@@ -3,10 +3,18 @@
 A local, single-user double-entry ledger. You record and read the user's own
 transactions through an MCP server on loopback.
 
-**Protocol:** this server speaks **only** MCP `2026-07-28`. It does not open with
-`initialize`, and it rejects older clients. Every request must carry
-`MCP-Protocol-Version: 2026-07-28` plus the standard `Mcp-Method` /
-`Mcp-Name` routing headers.
+**Protocol:** the server supports `2024-11-05` through `2026-07-28`, and picks
+the highest version you ask for.
+
+- If you negotiate `2026-07-28`: there is no `initialize`. Every request must
+  carry `MCP-Protocol-Version: 2026-07-28` plus the standard `Mcp-Method` /
+  `Mcp-Name` routing headers, and `_meta` with the protocol version and your
+  client capabilities.
+- If you are older than that: open with `initialize` as usual, keep the
+  `Mcp-Session-Id` it returns, and send it back on every later request.
+
+Most hosts handle this for you; this section is here so a raw-HTTP integration
+knows which shape to send.
 
 **Auth:** static bearer token, configured by the user
 (`Authorization: Bearer <token>`). There is no OAuth discovery.
