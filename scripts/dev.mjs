@@ -15,7 +15,9 @@
  * Usage: npm run dev:app  (or `make dev`)
  */
 import { spawn } from "node:child_process";
+import { rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -43,7 +45,10 @@ function isFree(port) {
  * First bindable port at or above `preferred`, or null when the whole range is
  * taken. Exported so the probe can be exercised without launching Tauri.
  */
-export async function findFreePort(preferred = PREFERRED_PORT, attempts = ATTEMPTS) {
+export async function findFreePort(
+  preferred = PREFERRED_PORT,
+  attempts = ATTEMPTS,
+) {
   for (let offset = 0; offset < attempts; offset += 1) {
     const port = preferred + offset;
     if (port > 65535) break;
@@ -71,18 +76,53 @@ async function main() {
     console.warn(`[dev] port ${PREFERRED_PORT} is busy, using ${port}.`);
   }
 
-  const tauriCli = path.join(root, "node_modules", "@tauri-apps", "cli", "tauri.js");
+  const tauriCli = path.join(
+    root,
+    "node_modules",
+    "@tauri-apps",
+    "cli",
+    "tauri.js",
+  );
   // Only `devUrl` is overridden: `beforeDevCommand` stays owned by
   // tauri.conf.json, so there is one place to change how vite is started. The
   // port reaches vite through the environment instead of the command string,
   // so the two values cannot drift apart.
-  const config = JSON.stringify({ build: { devUrl: `http://localhost:${port}` } });
+  //
+  // Handed over as a file rather than an inline JSON string: a JSON blob on
+  // the command line means nested quotes, and Windows argv quoting is exactly
+  // where that becomes a bug report.
+  const configPath = path.join(os.tmpdir(), `glimmerx-dev-${process.pid}.json`);
+  writeFileSync(
+    configPath,
+    JSON.stringify({ build: { devUrl: `http://localhost:${port}` } }),
+  );
 
-  const child = spawn(process.execPath, [tauriCli, "dev", "--config", config], {
-    cwd: root,
-    stdio: "inherit",
-    env: { ...process.env, GLIMMERX_DEV_PORT: String(port) },
-  });
+  const cleanup = () => {
+    try {
+      rmSync(configPath, { force: true });
+    } catch {
+      // A leftover file in the temp dir is harmless.
+    }
+  };
+  process.on("exit", cleanup);
+  // `exit` does not run on a signal, and Ctrl+C is the normal way to stop a
+  // dev server, so clean up there too.
+  for (const signal of ["SIGINT", "SIGTERM"]) {
+    process.on(signal, () => {
+      cleanup();
+      process.exit(0);
+    });
+  }
+
+  const child = spawn(
+    process.execPath,
+    [tauriCli, "dev", "--config", configPath],
+    {
+      cwd: root,
+      stdio: "inherit",
+      env: { ...process.env, GLIMMERX_DEV_PORT: String(port) },
+    },
+  );
 
   child.on("error", (error) => {
     console.error("[dev] failed to start tauri:", error.message);

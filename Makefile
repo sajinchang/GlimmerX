@@ -60,10 +60,12 @@ setup:
 	fi
 
 # ── Dev ───────────────────────────────────────────────────────
+# Goes through scripts/dev.mjs: picks a free dev-server port instead of
+# dying when 11422 is occupied.
+# Calls node directly rather than `npm run`: with no POSIX shell (minGW make
+# on Windows), node.exe is still resolvable where npm.cmd may not be.
 dev:
-	# Goes through scripts/dev.mjs: picks a free dev-server port instead of
-	# dying when 11422 is occupied.
-	npm run dev:app
+	node scripts/dev.mjs
 
 dev-web:
 	npm run dev
@@ -124,9 +126,9 @@ coverage:
 	cd src-tauri && cargo llvm-cov --all-targets --fail-under-lines $(COVERAGE_MIN) --ignore-filename-regex '$(COVERAGE_IGNORE)'
 
 # ── Check ─────────────────────────────────────────────────────
+# python3 优先，退回 python（部分发行版只装其一）。
 check:
 	@echo "→ Error message table check..."
-	# 判断是 python or python3
 	if command -v python3 >/dev/null 2>&1; then \
 		python3 tools/gen_error_messages.py --check; \
 	else \
