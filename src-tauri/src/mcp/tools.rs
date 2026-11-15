@@ -503,7 +503,18 @@ impl rmcp::ServerHandler for LedgerTools {
     /// 2026-07-28 and nothing else (§5.5). Clients that still open with
     /// `initialize` are rejected rather than silently served.
     fn supported_protocol_versions(&self) -> std::borrow::Cow<'static, [ProtocolVersion]> {
-        std::borrow::Cow::Borrowed(&[ProtocolVersion::V_2026_07_28])
+        // Dual version, newest first: the negotiation picks the highest
+        // version both sides know. Newest-only broke real clients — the
+        // first one tried (WorkBuddy) still opens with `initialize` and got
+        // -32022. Old versions are served through the legacy session path;
+        // 2026-07-28 stays stateless per SEP-2567.
+        std::borrow::Cow::Borrowed(&[
+            ProtocolVersion::V_2026_07_28,
+            ProtocolVersion::V_2025_11_25,
+            ProtocolVersion::V_2025_06_18,
+            ProtocolVersion::V_2025_03_26,
+            ProtocolVersion::V_2024_11_05,
+        ])
     }
 
     async fn list_resources(

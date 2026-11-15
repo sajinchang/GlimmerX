@@ -342,14 +342,16 @@ async fn test_locked_ledger_reports_locked() {
 }
 
 #[tokio::test]
-async fn test_legacy_client_is_rejected() {
+async fn test_legacy_client_can_initialize_and_call() {
+    // WorkBuddy and friends still open with `initialize` and expect a session
+    // id. Served through the legacy session path; 2026-07-28 clients stay
+    // stateless (design doc 25, §5.5).
     let (app, _dir) = setup_app("readonly", 19509);
     let client = reqwest::Client::new();
     let url = "http://127.0.0.1:19509/mcp".to_string();
     let token = token_of(&app);
     wait_up(&client, &url, &token).await;
 
-    // A pre-2026-07-28 client: it still opens with initialize.
     let resp = client
         .post(&url)
         .header("Authorization", format!("Bearer {token}"))
@@ -366,11 +368,55 @@ async fn test_legacy_client_is_rejected() {
         .await
         .expect("request");
 
+    let status = resp.status();
+    let session = resp
+        .headers()
+        .get("Mcp-Session-Id")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
     let body: serde_json::Value = resp.json().await.expect("json body");
+
+    assert!(status.is_success(), "initialize: {body}");
     assert!(
-        body.get("error").is_some(),
-        "the only supported version is 2026-07-28, got: {body}"
+        body.get("error").is_none(),
+        "an old client must negotiate, not be rejected: {body}"
     );
+    assert_eq!(body["result"]["protocolVersion"], "2025-11-25");
+    assert!(!session.is_empty(), "legacy clients need a session id");
+
+    // The handshake notification is part of the legacy flow.
+    client
+        .post(&url)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Mcp-Session-Id", &session)
+        .header("Accept", "application/json, text/event-stream")
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0", "method": "notifications/initialized"
+        }))
+        .send()
+        .await
+        .expect("initialized notification");
+
+    // No `_meta`, no version header: the old transport does not send them.
+    let list = client
+        .post(&url)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Mcp-Session-Id", &session)
+        .header("Accept", "application/json, text/event-stream")
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}
+        }))
+        .send()
+        .await
+        .expect("tools/list");
+    let list: serde_json::Value = list.json().await.expect("json body");
+    let names = list["result"]["tools"]
+        .as_array()
+        .unwrap_or_else(|| panic!("tools/list failed: {list}"))
+        .len();
+    assert_eq!(names, 8, "all tools are visible to a legacy client");
+
     stop(&app);
 }
 

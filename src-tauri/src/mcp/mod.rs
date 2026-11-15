@@ -175,12 +175,15 @@ async fn serve(host: Arc<dyn McpHost>, token: String, preferred_port: u16) -> Re
     host.set_runtime_port(bound_port);
 
     let config = StreamableHttpServerConfig::default()
-        .with_legacy_session_mode(false)
+        // Dual version (design doc 25, §5.5): requests that negotiate
+        // 2026-07-28 are served statelessly regardless of this flag (SEP-2567),
+        // while older clients still get the `initialize` handshake and the
+        // `Mcp-Session-Id` their transport expects.
+        .with_legacy_session_mode(true)
         .with_json_response(true)
-        // 2026-07-28 removed sessions and the initialize handshake (SEP-2567):
-        // every request carries its own protocol version. Requiring the header
-        // makes a client that skipped it fail loudly instead of being served
-        // as an old-version peer (design doc 25, §5.5).
+        // Only affects the stateless path, i.e. 2026-07-28 requests: those must
+        // carry their own protocol signals. Legacy sessions keep their own
+        // rules, so this does not lock old clients out.
         .with_stateless_protocol_metadata_required(true);
     // The factory closure runs per request; the only shared state is the
     // host, which is the whole point of running in-process.
