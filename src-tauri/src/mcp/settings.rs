@@ -219,7 +219,9 @@ mod tests {
         save_allow_create_account(&conn, true).unwrap();
         assert!(load_config(&conn).unwrap().allow_create_account);
         assert_eq!(
-            get_setting(&conn, KEY_ALLOW_CREATE_ACCOUNT).unwrap().as_deref(),
+            get_setting(&conn, KEY_ALLOW_CREATE_ACCOUNT)
+                .unwrap()
+                .as_deref(),
             Some("true")
         );
 

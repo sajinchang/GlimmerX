@@ -41,6 +41,10 @@ pub trait McpHost: Send + Sync + 'static {
     /// Mark the runtime stopped (the serve loop exited on its own).
     fn mark_runtime_stopped(&self);
 
+    /// Record that the server could not start (or died) and why, so the
+    /// settings page can explain it. Must never abort app start-up.
+    fn mark_runtime_failed(&self, reason: String);
+
     /// Running + port snapshot.
     fn runtime_status(&self) -> McpRuntimeStatus;
 }
@@ -81,6 +85,8 @@ impl<R: Runtime> McpHost for AppHandle<R> {
         inner.task = Some(task);
         inner.port = Some(port);
         inner.running = true;
+        // A new attempt supersedes whatever went wrong last time.
+        inner.error = None;
     }
 
     fn set_runtime_port(&self, port: u16) {
@@ -97,6 +103,7 @@ impl<R: Runtime> McpHost for AppHandle<R> {
         }
         inner.port = None;
         inner.running = false;
+        inner.error = None;
     }
 
     fn mark_runtime_stopped(&self) {
@@ -106,12 +113,21 @@ impl<R: Runtime> McpHost for AppHandle<R> {
         inner.port = None;
     }
 
+    fn mark_runtime_failed(&self, reason: String) {
+        let runtime = self.state::<McpRuntime>();
+        let mut inner = runtime.inner_mut();
+        inner.running = false;
+        inner.port = None;
+        inner.error = Some(reason);
+    }
+
     fn runtime_status(&self) -> McpRuntimeStatus {
         let runtime = self.state::<McpRuntime>();
         let inner = runtime.inner_mut();
         McpRuntimeStatus {
             running: inner.running,
             port: if inner.running { inner.port } else { None },
+            error: inner.error.clone(),
         }
     }
 }

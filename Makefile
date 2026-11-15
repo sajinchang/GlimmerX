@@ -61,7 +61,9 @@ setup:
 
 # ── Dev ───────────────────────────────────────────────────────
 dev:
-	npm run tauri dev
+	# Goes through scripts/dev.mjs: picks a free dev-server port instead of
+	# dying when 11422 is occupied.
+	npm run dev:app
 
 dev-web:
 	npm run dev
@@ -112,7 +114,7 @@ coverage-install:
 	cargo install cargo-llvm-cov --locked
 
 # Excluded: entry points (never exercised by tests) and the generated message
-# table. Measured baseline after exclusions: 94.09% lines (2026-11-14), so the
+# table. Measured baseline after exclusions: 94.04% lines (2026-11-15), so the
 # gate sits just below it as a no-regression floor — raise it as coverage grows
 # (same policy as the frontend coverage gate).
 COVERAGE_IGNORE = src[\\/](lib|main)\.rs|src[\\/]errors[\\/]messages\.rs

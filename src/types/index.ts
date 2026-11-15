@@ -526,6 +526,8 @@ export interface McpConfig {
   /** Port actually bound; null when the server is not running. */
   actualPort: number | null;
   running: boolean;
+  /** Why the server is not running, when the last start attempt failed. */
+  runtimeError: string | null;
   trustMode: McpTrustMode;
   /** Whether the agent may call `create_account`; independent of the tier. */
   allowCreateAccount: boolean;

@@ -34,6 +34,7 @@ export function McpSettingsSection() {
   const [port, setPort] = useState("17823");
   const [actualPort, setActualPort] = useState<number | null>(null);
   const [running, setRunning] = useState(false);
+  const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const [trust, setTrust] = useState<McpTrustMode>("readonly");
   const [allowCreateAccount, setAllowCreateAccount] = useState(false);
   const [token, setToken] = useState("");
@@ -56,6 +57,9 @@ export function McpSettingsSection() {
         setPort(String(config.port));
         setActualPort(config.actualPort);
         setRunning(config.running);
+        setRuntimeError(config.runtimeError);
+        setRuntimeError(config.runtimeError);
+        setRuntimeError(config.runtimeError);
         setTrust(config.trustMode);
         setAllowCreateAccount(config.allowCreateAccount);
         setToken(config.token);
@@ -145,6 +149,13 @@ export function McpSettingsSection() {
                 ? t("mcp.runningOn", { port: actualPort ?? port })
                 : t("mcp.notRunning")}
             </p>
+            {/* A failed start must not look like "off": the switch is on and
+                the port is configured, but nothing is listening. */}
+            {!running && runtimeError && (
+              <p className="text-xs text-destructive">
+                {t("mcp.startFailed", { reason: runtimeError })}
+              </p>
+            )}
           </div>
           <Switch
             checked={enabled}

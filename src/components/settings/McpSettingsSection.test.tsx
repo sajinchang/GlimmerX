@@ -24,6 +24,7 @@ const baseConfig = {
   port: 17823,
   actualPort: null,
   running: false,
+  runtimeError: null,
   trustMode: "readonly",
   allowCreateAccount: false,
   token: "a".repeat(64),
@@ -109,5 +110,25 @@ describe("McpSettingsSection", () => {
     await waitFor(() => {
       expect(screen.getByDisplayValue("b".repeat(64))).toBeInTheDocument();
     });
+  });
+  it("explains why the server is not running", async () => {
+    mockGet.mockResolvedValue({
+      ...baseConfig,
+      enabled: true,
+      running: false,
+      runtimeError: "no free port in 127.0.0.1:17823..17832",
+    });
+
+    render(<McpSettingsSection />);
+
+    // The switch is on but nothing listens: "not running" alone would look
+    // like the user simply turned it off.
+    // The suite renders in Chinese (the default locale), so match either.
+    expect(
+      await screen.findByText(/启动失败|Could not start/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/no free port in 127\.0\.0\.1:17823/),
+    ).toBeInTheDocument();
   });
 });

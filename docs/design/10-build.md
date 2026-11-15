@@ -6,8 +6,9 @@
 
 ```bash
 npm install
-npm run tauri dev        # React HMR + Tauri
-npm run dev              # 仅前端（浏览器调试）
+make dev                 # 推荐：= npm run dev:app，端口被占用时自动顺延
+npm run tauri dev        # 直连 Tauri CLI（端口固定 11422，占用即失败）
+npm run dev              # 仅前端（浏览器调试；端口占用时自动换下一个）
 ```
 
 ## 生产构建

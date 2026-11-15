@@ -920,6 +920,7 @@
     "title": "自动化（MCP）",
     "enable": "本地 MCP 服务",
     "notRunning": "未运行",
+    "startFailed": "启动失败：{{reason}}",
     "runningOn": "运行中 · 127.0.0.1:{{port}}/mcp",
     "port": "端口",
     "applyPort": "应用",

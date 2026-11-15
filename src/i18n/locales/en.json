@@ -920,6 +920,7 @@
     "title": "Automation (MCP)",
     "enable": "Local MCP server",
     "notRunning": "Not running",
+    "startFailed": "Could not start: {{reason}}",
     "runningOn": "Running · 127.0.0.1:{{port}}/mcp",
     "port": "Port",
     "applyPort": "Apply",

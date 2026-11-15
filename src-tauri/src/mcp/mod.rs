@@ -72,6 +72,9 @@ pub(crate) struct McpRuntimeInner {
     pub(crate) port: Option<u16>,
     /// `true` from spawn until `serve` exits or the task is aborted.
     pub(crate) running: bool,
+    /// Why the last start attempt failed, if it did. Cleared on the next
+    /// attempt so a stale reason cannot outlive the failure it describes.
+    pub(crate) error: Option<String>,
 }
 
 /// How many ports above the configured one to try before giving up.
@@ -105,8 +108,16 @@ pub fn sync(host: &Arc<dyn McpHost>) {
     let token = config.token.clone();
     let preferred_port = config.port;
     let task = tauri::async_runtime::spawn(async move {
-        if let Err(e) = serve(task_host.clone(), token, preferred_port).await {
-            eprintln!("[glimmerx] MCP server stopped: {e}");
+        // One place decides the terminal state: a normal return means the
+        // server loop ended, an error means it never started or died. The
+        // reason is kept so the settings page can show it instead of a bare
+        // "not running" (the app itself is never blocked by this).
+        match serve(task_host.clone(), token, preferred_port).await {
+            Ok(()) => task_host.mark_runtime_stopped(),
+            Err(e) => {
+                eprintln!("[glimmerx] MCP server unavailable: {e}");
+                task_host.mark_runtime_failed(e);
+            }
         }
     });
     // Optimistic port: `serve` rewrites it with the actually-bound one (the
@@ -127,6 +138,9 @@ pub fn restart(host: &Arc<dyn McpHost>) {
 pub struct McpRuntimeStatus {
     pub running: bool,
     pub port: Option<u16>,
+    /// Start-up or run failure, surfaced in the settings page. `None` while
+    /// running normally, and after a successful (re)start.
+    pub error: Option<String>,
 }
 
 async fn serve(host: Arc<dyn McpHost>, token: String, preferred_port: u16) -> Result<(), String> {
@@ -205,13 +219,11 @@ async fn serve(host: Arc<dyn McpHost>, token: String, preferred_port: u16) -> Re
         .layer(auth);
 
     println!("[glimmerx] MCP server listening on http://127.0.0.1:{bound_port}/mcp");
-    let result = axum::serve(listener, router)
+    // The caller marks the terminal state: it also has to cover the bind
+    // failures that return before this point.
+    axum::serve(listener, router)
         .await
-        .map_err(|e| e.to_string());
-    // The task leaving the loop means the server is down (bind error, or a
-    // stray call after the runtime was aborted).
-    host.mark_runtime_stopped();
-    result
+        .map_err(|e| e.to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -247,6 +259,7 @@ pub fn status_from(runtime: &McpRuntime) -> McpRuntimeStatus {
         None => McpRuntimeStatus {
             running: false,
             port: None,
+            error: None,
         },
     }
 }

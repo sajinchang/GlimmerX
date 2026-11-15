@@ -721,10 +721,13 @@ mod tests {
 
         fn mark_runtime_stopped(&self) {}
 
+        fn mark_runtime_failed(&self, _reason: String) {}
+
         fn runtime_status(&self) -> McpRuntimeStatus {
             McpRuntimeStatus {
                 running: false,
                 port: None,
+                error: None,
             }
         }
     }

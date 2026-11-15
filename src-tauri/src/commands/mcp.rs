@@ -1,5 +1,5 @@
-//! MCP-related commands: the settings UI and the approval resolution
-//! callback from the webview (design doc 25, §5.4 / §8.1).
+//! MCP-related commands: the settings UI and the runtime status that backs it
+//! (design doc 25, §5.4 / §8.1).
 
 use std::sync::Arc;
 
@@ -22,6 +22,8 @@ pub struct McpConfigDto {
     /// Port actually bound; `null` when the server is not running.
     pub actual_port: Option<u16>,
     pub running: bool,
+    /// Why the server is not running, when the last start attempt failed.
+    pub runtime_error: Option<String>,
     pub trust_mode: String,
     /// Whether the agent may call `create_account` (design doc 25, §4.3).
     pub allow_create_account: bool,
@@ -51,6 +53,7 @@ pub async fn mcp_get_config(runtime: State<'_, McpRuntime>) -> Result<McpConfigD
         port: config.port,
         actual_port: status.port,
         running: status.running,
+        runtime_error: status.error.clone(),
         trust_mode: config.trust.as_str().to_string(),
         allow_create_account: config.allow_create_account,
         token: config.token,
@@ -170,6 +173,7 @@ mod tests {
             port: 17823,
             actual_port: None,
             running: false,
+            runtime_error: None,
             trust_mode: "trust".into(),
             allow_create_account: false,
             token: "t".repeat(64),
@@ -191,6 +195,7 @@ mod tests {
                 "enabled".to_string(),
                 "port".to_string(),
                 "running".to_string(),
+                "runtimeError".to_string(),
                 "token".to_string(),
                 "trustMode".to_string(),
             ]
