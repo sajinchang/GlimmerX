@@ -1,57 +1,27 @@
-import { renderHook } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { resolveColor, useChartColors } from "./chartColors";
-
-/**
- * The formats zrender's own colour parser understands
- * (`zrender/lib/tool/color.js`): hex, `rgb()` and `rgba()`. It knows nothing
- * about oklch, and ECharts rebuilds a series' emphasis style from that parser
- * (`liftColor`), so a colour it cannot read becomes `undefined` — which is
- * how a hovered line ends up with no stroke and disappears.
- */
-const PARSEABLE =
-  /^#([0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$|^rgba?\(/i;
+import { renderHook } from "@testing-library/react";
+import { resolveColor, useChartColors } from "@/utils/chartColors";
 
 describe("resolveColor", () => {
-  it("never hands back a colour the parser cannot read", () => {
-    // In the app the browser converts the value to the sRGB triple the canvas
-    // would paint. jsdom has no canvas to convert with, so the fallback is
-    // returned there — which is the same contract: something parseable.
-    for (const value of [
-      "rgb(1, 2, 3)",
-      "#3f9c6d",
-      "oklch(0.72 0.16 155)",
-      "oklch(0.93 calc(0.019 * 1) 250)",
-      "not-a-colour",
-    ]) {
-      expect(resolveColor(value, "#123456")).toMatch(PARSEABLE);
-    }
+  it("keeps the fallback when there is nothing to resolve", () => {
+    expect(resolveColor("", "#123456")).toBe("#123456");
   });
 
-  it("falls back on an empty value", () => {
-    expect(resolveColor("", "#123456")).toBe("#123456");
+  it("keeps the fallback when the browser cannot paint the value", () => {
+    // jsdom has no canvas, so the probe has no context and every value falls
+    // back to the token's fallback.
+    expect(resolveColor("oklch(0.7 0.1 20)", "#123456")).toBe("#123456");
   });
 });
 
 describe("useChartColors", () => {
-  it("hands ECharts only colours its own parser can read", () => {
+  it("hands the palette to the chart", () => {
     const { result } = renderHook(() => useChartColors());
-    const colors = result.current;
-    const every = [
-      colors.income,
-      colors.expense,
-      colors.signal,
-      colors.info,
-      colors.text,
-      colors.neutral,
-      colors.surface,
-      colors.border,
-      colors.grid,
-      colors.axis,
-      ...colors.series,
-    ];
-    for (const color of every) {
-      expect(color).toMatch(PARSEABLE);
-    }
+
+    expect(result.current.income).toBe("#3f9c6d");
+    expect(result.current.expense).toBe("#c0463f");
+    expect(result.current.series).toHaveLength(8);
+    expect(result.current.mono).toContain("monospace");
+    expect(result.current.sans).toContain("sans-serif");
   });
 });

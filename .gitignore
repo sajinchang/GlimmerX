@@ -80,3 +80,5 @@ release/
 *.db
 *.db-shm
 *.db-wal
+design/homepage-tech/
+design/redesign/

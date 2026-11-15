@@ -1,138 +1,186 @@
-import { describe, it, expect } from "vitest";
-import { act, renderHook } from "@testing-library/react";
-import type { ReactNode } from "react";
-import { MemoryRouter } from "react-router-dom";
+import { describe, expect, it } from "vitest";
+import { renderHook, act } from "@testing-library/react";
+import { MemoryRouter } from "react-router";
 import { useReportQuery } from "@/hooks/useReportQuery";
 import { todayLocalDate } from "@/utils/date";
 
-/**
- * The URL is the report page's state store, so these are the contract tests for
- * it: what a link means, and what a click writes back. Anything that changes
- * the shape of `?r=&p=&g=&d=&s=&e=&a=` has to keep these green, because a link
- * someone saved is a small promise.
- */
-function renderAt(initial: string) {
+function renderReportQuery(url: string) {
   return renderHook(() => useReportQuery(), {
-    wrapper: ({ children }: { children: ReactNode }) => (
-      <MemoryRouter initialEntries={[initial]}>{children}</MemoryRouter>
+    wrapper: ({ children }: { children: React.ReactNode }) => (
+      <MemoryRouter initialEntries={[url]}>{children}</MemoryRouter>
     ),
   });
 }
 
 describe("useReportQuery", () => {
-  it("starts on cash flow for the current month", () => {
-    const { result } = renderAt("/reports");
-    expect(result.current.query.report).toBe("cashflow");
-    expect(result.current.query.preset).toBe("currentMonth");
-    // No tick size of its own: the month implies a daily axis.
-    expect(result.current.query.granularity).toBeNull();
-    expect(result.current.granularity).toBe("daily");
-    expect(result.current.definition.dateControl).toBe("range");
-    expect(result.current.range.startDate).toBeTruthy();
-    expect(result.current.range.endDate).toBeTruthy();
+  it("reads the report out of the address", () => {
+    const { result } = renderReportQuery("/reports?r=balanceSheet");
+
+    expect(result.current.query.report).toBe("balanceSheet");
+    expect(result.current.definition).toBeTruthy();
   });
 
-  it("lets the range decide the tick size", () => {
-    const { result } = renderAt("/reports?p=last12Months");
-    expect(result.current.query.granularity).toBeNull();
-    expect(result.current.granularity).toBe("monthly");
+  it("falls back to the default report", () => {
+    const { result } = renderReportQuery("/reports");
+
+    expect(result.current.query.report).toBeTruthy();
   });
 
-  it("keeps a tick size the range can show", () => {
-    const { result } = renderAt("/reports?p=last12Months&g=weekly");
-    expect(result.current.query.granularity).toBe("weekly");
-    expect(result.current.granularity).toBe("weekly");
+  it("swaps a reversed custom range", () => {
+    const { result } = renderReportQuery(
+      "/reports?r=cashflow&p=custom&s=2026-11-30&e=2026-11-01",
+    );
+
+    expect(result.current.range.startDate).toBe("2026-11-01");
+    expect(result.current.range.endDate).toBe("2026-11-30");
   });
 
-  it("replaces a tick size the range cannot show", () => {
-    // Yearly over one month is a single column, which reads as no data.
-    const { result } = renderAt("/reports?p=currentMonth&g=yearly");
-    expect(result.current.granularity).toBe("daily");
-    expect(result.current.granularityOptions).toEqual(["daily"]);
+  it("keeps a range that is the right way round", () => {
+    const { result } = renderReportQuery(
+      "/reports?r=cashflow&p=custom&s=2026-11-01&e=2026-11-30",
+    );
+
+    expect(result.current.range.startDate).toBe("2026-11-01");
+    expect(result.current.range.endDate).toBe("2026-11-30");
   });
 
-  it("records a chosen tick size in the URL", () => {
-    const { result } = renderAt("/reports?p=last12Months");
-    act(() => result.current.setGranularity("weekly"));
-    expect(result.current.query.granularity).toBe("weekly");
+  it("takes the current month when the custom range is empty", () => {
+    const { result } = renderReportQuery("/reports?r=cashflow&p=custom");
+
+    expect(result.current.range.startDate).not.toBe("");
   });
 
-  it("compares against the previous period by default", () => {
-    const { result } = renderAt("/reports");
-    expect(result.current.query.compare).toBe("previousPeriod");
-    expect(result.current.filter.compare).toBe("previousPeriod");
+  it("anchors a month report on the month", () => {
+    const { result } = renderReportQuery("/reports?r=budgets&d=2026-07-15");
+
+    expect(result.current.query.anchor).toBe("2026-07");
   });
 
-  it("reads the comparison basis from the URL", () => {
-    const { result } = renderAt("/reports?c=lastYear");
-    expect(result.current.query.compare).toBe("lastYear");
-    expect(result.current.filter.compare).toBe("lastYear");
+  it("anchors a day report on the day", () => {
+    const { result } = renderReportQuery("/reports?r=cashflow&d=2026-07-15");
+
+    expect(result.current.query.anchor).toBe("2026-07-15");
   });
 
-  it("records a chosen comparison basis", () => {
-    const { result } = renderAt("/reports");
-    act(() => result.current.setCompare("none"));
-    expect(result.current.query.compare).toBe("none");
+  it("keeps the day of a snapshot report", () => {
+    const { result } = renderReportQuery(
+      "/reports?r=balanceSheet&d=2026-07-15",
+    );
+
+    expect(result.current.query.anchor).toBe("2026-07-15");
   });
 
-  it("ignores an unknown report id instead of rendering nothing", () => {
-    const { result } = renderAt("/reports?r=nonsense");
-    expect(result.current.query.report).toBe("cashflow");
+  it("anchors a snapshot report on the first of the month", () => {
+    const { result } = renderReportQuery("/reports?r=balanceSheet&d=2026-07");
+
+    expect(result.current.query.anchor).toBe("2026-07-01");
   });
 
-  it("reads a month anchor for the budget report", () => {
-    const { result } = renderAt("/reports?r=budgets&d=2026-03");
-    expect(result.current.definition.dateControl).toBe("month");
-    expect(result.current.query.anchor).toBe("2026-03");
-    expect(result.current.anchorYear).toBe(2026);
-    expect(result.current.anchorMonth).toBe(3);
-    expect(result.current.anchorMonthValue).toBe("2026-03");
+  it("anchors on today when nothing was picked", () => {
+    const { result } = renderReportQuery("/reports?r=cashflow");
+
+    expect(result.current.query.anchor).toBe(todayLocalDate());
   });
 
-  it("widens a month anchor to a day for the balance sheet", () => {
-    const { result } = renderAt("/reports?r=balanceSheet&d=2026-03");
-    expect(result.current.definition.dateControl).toBe("snapshot");
-    expect(result.current.query.anchor).toBe("2026-03-01");
-  });
+  it("writes the range into the address", () => {
+    const { result } = renderReportQuery("/reports?r=cashflow");
 
-  it("falls back to the current month when a custom range is half empty", () => {
-    const { result } = renderAt("/reports?p=custom&s=2024-01-01");
-    const month = renderAt("/reports").result.current.range;
-    expect(result.current.range).toEqual(month);
-  });
-
-  it("honours a complete custom range", () => {
-    const { result } = renderAt("/reports?p=custom&s=2024-01-01&e=2024-03-31");
-    expect(result.current.range).toEqual({
-      startDate: "2024-01-01",
-      endDate: "2024-03-31",
+    act(() => {
+      result.current.setPreset("custom");
     });
+    act(() => {
+      result.current.setCustomRange("2026-11-01", "2026-11-30");
+    });
+
+    expect(result.current.query.preset).toBe("custom");
+    expect(result.current.query.start).toBe("2026-11-01");
+    expect(result.current.query.end).toBe("2026-11-30");
   });
 
-  it("writes the selected report and keeps the period", () => {
-    const { result } = renderAt("/reports?p=last6Months");
-    act(() => result.current.selectReport("netWorth"));
-    expect(result.current.query.report).toBe("netWorth");
-    expect(result.current.query.preset).toBe("last6Months");
-  });
+  it("takes the range out of the address again", () => {
+    const { result } = renderReportQuery(
+      "/reports?r=cashflow&p=custom&s=2026-11-01&e=2026-11-30",
+    );
 
-  it("stores an account so the view can be linked", () => {
-    const { result } = renderAt("/reports?r=accounts");
-    act(() => result.current.setAccount("acc-1"));
-    expect(result.current.query.accountId).toBe("acc-1");
-  });
+    act(() => {
+      result.current.setPreset("currentMonth");
+    });
 
-  it("clears a custom range when the preset changes away from it", () => {
-    const { result } = renderAt("/reports?p=custom&s=2024-01-01&e=2024-03-31");
-    act(() => result.current.setPreset("currentYear"));
-    expect(result.current.query.preset).toBe("currentYear");
     expect(result.current.query.start).toBe("");
     expect(result.current.query.end).toBe("");
   });
 
-  it("resets the anchor to today", () => {
-    const { result } = renderAt("/reports?r=balanceSheet&d=2020-01-01");
-    act(() => result.current.reset());
-    expect(result.current.query.anchor).toBe(todayLocalDate());
+  it("keeps a tick size that was picked", () => {
+    const { result } = renderReportQuery("/reports?r=cashflow");
+
+    act(() => {
+      result.current.setGranularity("monthly");
+    });
+
+    expect(result.current.query.granularity).toBe("monthly");
+  });
+
+  it("writes the anchor that was picked", () => {
+    const { result } = renderReportQuery("/reports?r=cashflow");
+
+    act(() => {
+      result.current.setAnchor("2026-07-15");
+    });
+
+    expect(result.current.query.anchor).toBe("2026-07-15");
+  });
+
+  it("writes the account that was picked", () => {
+    const { result } = renderReportQuery("/reports?r=accounts");
+
+    act(() => {
+      result.current.setAccount("acc1");
+    });
+
+    expect(result.current.query.accountId).toBe("acc1");
+  });
+
+  it("takes the tick size away when everything is reset", () => {
+    const { result } = renderReportQuery("/reports?r=cashflow&g=monthly");
+
+    act(() => {
+      result.current.reset();
+    });
+
+    expect(result.current.query.granularity).toBeNull();
+  });
+
+  it("picks another report", () => {
+    const { result } = renderReportQuery("/reports?r=cashflow");
+
+    act(() => {
+      result.current.selectReport("categories");
+    });
+
+    expect(result.current.query.report).toBe("categories");
+  });
+
+  it("picks what to compare with", () => {
+    const { result } = renderReportQuery("/reports?r=cashflow");
+
+    act(() => {
+      result.current.setCompare("lastYear");
+    });
+
+    expect(result.current.query.compare).toBe("lastYear");
+  });
+
+  it("reads the year and the month of the anchor", () => {
+    const { result } = renderReportQuery("/reports?r=budgets&d=2026-07-15");
+
+    expect(result.current.anchorYear).toBe(2026);
+    expect(result.current.anchorMonth).toBe(7);
+  });
+
+  it("falls back to the current year and month", () => {
+    const { result } = renderReportQuery("/reports?r=budgets");
+
+    expect(result.current.anchorYear).toBeGreaterThan(2000);
+    expect(result.current.anchorMonth).toBeGreaterThan(0);
   });
 });

@@ -1,134 +1,235 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
-import { McpSettingsSection } from "./McpSettingsSection";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { McpSettingsSection } from "@/components/settings/McpSettingsSection";
+import { renderWithProviders } from "@/test-utils/render";
+import { clickOption, openSelect } from "@/test-utils/radix";
 
-vi.mock("@/utils/api", () => ({
-  setUiLanguage: vi.fn().mockResolvedValue(undefined),
-  mcpGetConfig: vi.fn(),
-  mcpSetConfig: vi.fn(),
-  mcpResetToken: vi.fn(),
+const { api } = vi.hoisted(() => ({
+  api: {
+    mcpGetConfig: vi.fn(),
+    mcpSetConfig: vi.fn(),
+    mcpResetToken: vi.fn(),
+  },
 }));
 
-vi.mock("@/utils/errorTranslation", () => ({
-  translateErrorMessage: vi.fn((err) => String(err)),
-}));
+vi.mock("@/utils/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/utils/api")>();
+  return { ...actual, ...api };
+});
 
-import { mcpGetConfig, mcpSetConfig, mcpResetToken } from "@/utils/api";
-
-const mockGet = mcpGetConfig as ReturnType<typeof vi.fn>;
-const mockSet = mcpSetConfig as ReturnType<typeof vi.fn>;
-const mockReset = mcpResetToken as ReturnType<typeof vi.fn>;
-
-const baseConfig = {
-  enabled: false,
+const CONFIG = {
+  enabled: true,
   port: 17823,
-  actualPort: null,
-  running: false,
+  actualPort: 17823,
+  running: true,
   runtimeError: null,
   trustMode: "readonly",
   allowCreateAccount: false,
-  token: "a".repeat(64),
+  token: "secret-token",
 };
 
 describe("McpSettingsSection", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
-    mockGet.mockResolvedValue({ ...baseConfig });
-  });
-
-  it("shows the disabled state with the stored token", async () => {
-    render(<McpSettingsSection />);
-    await waitFor(() => {
-      expect(screen.getByDisplayValue("a".repeat(64))).toBeInTheDocument();
+    for (const fn of Object.values(api)) fn.mockReset();
+    api.mcpGetConfig.mockResolvedValue(CONFIG);
+    api.mcpSetConfig.mockResolvedValue(CONFIG);
+    api.mcpResetToken.mockResolvedValue({
+      ...CONFIG,
+      token: "new-token",
     });
-    expect(screen.getByText(/未运行|Not running/)).toBeInTheDocument();
-    // The client config block embeds the token and the preferred port.
-    expect(screen.getByText(/127\.0\.0\.1:17823\/mcp/)).toBeInTheDocument();
-  });
-
-  it("flipping the switch persists enabled and reflects the running state", async () => {
-    mockSet.mockResolvedValue({
-      ...baseConfig,
-      enabled: true,
-      running: true,
-      actualPort: 17823,
-    });
-    render(<McpSettingsSection />);
-    await screen.findByDisplayValue("a".repeat(64));
-
-    // Two switches now (server on/off and account creation); the server
-    // toggle is the first one in the section.
-    const toggle = screen.getAllByRole("switch")[0]!;
-    // Radix Switch needs the pointer lifecycle in jsdom, a bare click is a
-    // no-op on it.
-    fireEvent.pointerDown(toggle);
-    fireEvent.click(toggle);
-
-    await waitFor(() => {
-      expect(mockSet).toHaveBeenCalledWith({ enabled: true });
-    });
-    await waitFor(() => {
-      expect(
-        screen.getByText(/运行中 · 127\.0\.0\.1:17823/),
-      ).toBeInTheDocument();
+    Object.assign(navigator, {
+      clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
     });
   });
 
-  it("changing the trust mode persists it", async () => {
-    mockSet.mockResolvedValue({ ...baseConfig });
-    render(<McpSettingsSection />);
-    await screen.findByDisplayValue("a".repeat(64));
+  it("shows the configuration it read", async () => {
+    renderWithProviders(<McpSettingsSection />);
 
-    // Open the trust select (shadcn Select) and move it off the default.
-    // Picking the tier that is already selected fires no change event, and
-    // read-only is the default now.
-    fireEvent.click(screen.getByRole("combobox"));
-    const option = await screen.findByRole("option", {
-      name: /信任|write directly/i,
-    });
-    fireEvent.click(option);
-
-    await waitFor(() => {
-      expect(mockSet).toHaveBeenCalledWith({ trust: "trust" });
-    });
+    expect(
+      await screen.findByText(/运行中 · 127\.0\.0\.1:17823/),
+    ).toBeInTheDocument();
+    expect(
+      (screen.getByDisplayValue("secret-token") as HTMLInputElement).value,
+    ).toBe("secret-token");
+    expect(
+      screen.getAllByText(/127\.0\.0\.1:17823\/mcp/).length,
+    ).toBeGreaterThan(0);
   });
 
-  it("resetting the token rotates the shown value", async () => {
-    mockReset.mockResolvedValue({
-      ...baseConfig,
-      token: "b".repeat(64),
-    });
-    render(<McpSettingsSection />);
-    await screen.findByDisplayValue("a".repeat(64));
-
-    const reset = screen.getByTitle(/重置令牌|Reset token/);
-    fireEvent.click(reset);
-
-    await waitFor(() => {
-      expect(mockReset).toHaveBeenCalled();
-    });
-    await waitFor(() => {
-      expect(screen.getByDisplayValue("b".repeat(64))).toBeInTheDocument();
-    });
-  });
-  it("explains why the server is not running", async () => {
-    mockGet.mockResolvedValue({
-      ...baseConfig,
-      enabled: true,
+  it("says so when the server is not running", async () => {
+    api.mcpGetConfig.mockResolvedValue({
+      ...CONFIG,
       running: false,
-      runtimeError: "no free port in 127.0.0.1:17823..17832",
+      actualPort: null,
+    });
+    renderWithProviders(<McpSettingsSection />);
+
+    expect(await screen.findByText("未运行")).toBeInTheDocument();
+  });
+
+  it("says so when the server could not start", async () => {
+    api.mcpGetConfig.mockResolvedValue({
+      ...CONFIG,
+      running: false,
+      actualPort: null,
+      runtimeError: "端口被占用",
+    });
+    renderWithProviders(<McpSettingsSection />);
+
+    expect(await screen.findByText(/端口被占用/)).toBeInTheDocument();
+  });
+
+  it("reports a configuration it cannot read", async () => {
+    api.mcpGetConfig.mockRejectedValue(new Error("读不到"));
+    renderWithProviders(<McpSettingsSection />);
+
+    expect(await screen.findByText("读不到")).toBeInTheDocument();
+  });
+
+  it("switches the server on and off", async () => {
+    renderWithProviders(<McpSettingsSection />);
+    await screen.findByText(/运行中/);
+
+    const switches = screen.getAllByRole("switch");
+    fireEvent.click(switches[0] as HTMLElement);
+
+    await waitFor(() =>
+      expect(api.mcpSetConfig).toHaveBeenCalledWith({ enabled: false }),
+    );
+  });
+
+  it("applies a new port", async () => {
+    renderWithProviders(<McpSettingsSection />);
+    await screen.findByText(/运行中/);
+
+    fireEvent.change(screen.getByDisplayValue("17823") as HTMLInputElement, {
+      target: { value: "18000" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "应用" }));
+
+    await waitFor(() =>
+      expect(api.mcpSetConfig).toHaveBeenCalledWith({ port: 18000 }),
+    );
+  });
+
+  it("refuses a port that makes no sense", async () => {
+    renderWithProviders(<McpSettingsSection />);
+    await screen.findByText(/运行中/);
+
+    fireEvent.change(screen.getByDisplayValue("17823") as HTMLInputElement, {
+      target: { value: "70000" },
     });
 
-    render(<McpSettingsSection />);
+    expect(screen.getByRole("button", { name: "应用" })).toBeDisabled();
+  });
 
-    // The switch is on but nothing listens: "not running" alone would look
-    // like the user simply turned it off.
-    // The suite renders in Chinese (the default locale), so match either.
-    expect(
-      await screen.findByText(/启动失败|Could not start/),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/no free port in 127\.0\.0\.1:17823/),
-    ).toBeInTheDocument();
+  it("changes the trust level", async () => {
+    renderWithProviders(<McpSettingsSection />);
+    await screen.findByText(/运行中/);
+
+    const trigger = screen.getByRole("combobox");
+    await openSelect(trigger);
+    clickOption("信任（直接写入）");
+
+    await waitFor(() =>
+      expect(api.mcpSetConfig).toHaveBeenCalledWith({ trust: "trust" }),
+    );
+  });
+
+  it("lets the agents create accounts", async () => {
+    renderWithProviders(<McpSettingsSection />);
+    await screen.findByText(/运行中/);
+
+    const switches = screen.getAllByRole("switch");
+    fireEvent.click(switches[1] as HTMLElement);
+
+    await waitFor(() =>
+      expect(api.mcpSetConfig).toHaveBeenCalledWith({
+        allowCreateAccount: true,
+      }),
+    );
+  });
+
+  it("copies the token", async () => {
+    renderWithProviders(<McpSettingsSection />);
+    await screen.findByText(/运行中/);
+
+    const tokenInput = screen.getByDisplayValue("secret-token");
+    const copyButton = tokenInput.parentElement?.querySelector(
+      "button",
+    ) as HTMLElement;
+    fireEvent.click(copyButton);
+
+    await waitFor(() =>
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+        "secret-token",
+      ),
+    );
+  });
+
+  it("copies the client configuration", async () => {
+    renderWithProviders(<McpSettingsSection />);
+    await screen.findByText(/运行中/);
+
+    fireEvent.click(screen.getByRole("button", { name: "复制 MCP 配置" }));
+
+    await waitFor(() =>
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+        expect.stringContaining("glimmerx"),
+      ),
+    );
+  });
+
+  it("keeps the token when the clipboard refuses", async () => {
+    (
+      navigator.clipboard.writeText as ReturnType<typeof vi.fn>
+    ).mockRejectedValue(new Error("没有权限"));
+    renderWithProviders(<McpSettingsSection />);
+    await screen.findByText(/运行中/);
+
+    const tokenInput = screen.getByDisplayValue("secret-token");
+    const copyButton = tokenInput.parentElement?.querySelector(
+      "button",
+    ) as HTMLElement;
+    fireEvent.click(copyButton);
+
+    await waitFor(() =>
+      expect(navigator.clipboard.writeText).toHaveBeenCalled(),
+    );
+  });
+
+  it("gives the token a new one", async () => {
+    renderWithProviders(<McpSettingsSection />);
+    await screen.findByText(/运行中/);
+
+    fireEvent.click(screen.getByTitle("重置令牌"));
+
+    await waitFor(() => expect(api.mcpResetToken).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(
+        (screen.getByDisplayValue("new-token") as HTMLInputElement).value,
+      ).toBe("new-token"),
+    );
+  });
+
+  it("reports a configuration it cannot save", async () => {
+    api.mcpSetConfig.mockRejectedValue(new Error("存不了"));
+    renderWithProviders(<McpSettingsSection />);
+    await screen.findByText(/运行中/);
+
+    const switches = screen.getAllByRole("switch");
+    fireEvent.click(switches[0] as HTMLElement);
+
+    expect(await screen.findByText("存不了")).toBeInTheDocument();
+  });
+
+  it("reports a token it cannot reset", async () => {
+    api.mcpResetToken.mockRejectedValue(new Error("换不了"));
+    renderWithProviders(<McpSettingsSection />);
+    await screen.findByText(/运行中/);
+
+    fireEvent.click(screen.getByTitle("重置令牌"));
+
+    expect(await screen.findByText("换不了")).toBeInTheDocument();
   });
 });

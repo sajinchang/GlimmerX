@@ -5,9 +5,15 @@ import path from "path";
 export default defineConfig({
   plugins: [react()],
   resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "./src"),
-    },
+    alias: [
+      { find: "@", replacement: path.resolve(__dirname, "./src") },
+      // The app imports both `react-router` (Link, hooks) and
+      // `react-router-dom` (BrowserRouter). In tests the two entry points
+      // resolve to different builds — one ESM, one CJS — so each keeps its own
+      // router context and a `<Link>` inside our `MemoryRouter` sees `null`.
+      // Point both at the same package.
+      { find: /^react-router-dom$/, replacement: "react-router" },
+    ],
   },
   test: {
     environment: "jsdom",
@@ -25,14 +31,16 @@ export default defineConfig({
         "src/i18n/locales/**",
         "src/vite-env.d.ts",
       ],
-      // Initial "no-regression" gate measured on 2026-11-13 with all source
-      // files included (7.61% stmts / 7.6% lines / 8.41% funcs / 3.42% branches).
-      // Raise these by ~5 points per iteration as page/component tests land.
+      // Target: 90% on every metric. The floor is raised after each batch of
+      // tests so no gain can silently regress.
+      // Measured 2026-11-15 after the utils / hooks / stores / api batch and
+      // the pages batch: 51.66% stmts, 52.13% lines, 47.76% funcs, 40.15%
+      // branches.
       thresholds: {
-        statements: 7,
-        lines: 7,
-        functions: 8,
-        branches: 3,
+        statements: 51,
+        lines: 52,
+        functions: 47,
+        branches: 40,
       },
     },
   },
