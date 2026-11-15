@@ -580,7 +580,7 @@
       "categoryTypeMismatch": "分类类型与交易类型不匹配"
     },
     "mcp": {
-      "invalidTrustMode": "信任模式无效，应为只读、确认或信任",
+      "invalidTrustMode": "信任模式无效，应为只读或信任",
       "invalidPort": "端口号无效"
     }
   },
@@ -613,6 +613,16 @@
     "button": "识别并录入",
     "recognizing": "识别中...",
     "success": "已录入",
+    "receipt": {
+      "title": "已录入，看看对不对？",
+      "saved": "已经记入账本，不需要再做别的。",
+      "undo": "撤销",
+      "issue": "有问题",
+      "done": "没问题",
+      "undoSuccess": "已撤销",
+      "undoFailed": "撤销失败，可在交易列表里删除",
+      "editTitle": "修改这一笔"
+    },
     "settings": {
       "title": "AI 记账",
       "provider": "服务商",
@@ -915,9 +925,10 @@
     "applyPort": "应用",
     "trustMode": "信任模式",
     "trustReadonly": "只读",
-    "trustConfirm": "写入前确认（默认）",
     "trustTrust": "信任（直接写入）",
-    "trustHint": "只读：写操作被拒。确认：写入前弹卡片，120 秒无响应自动取消。信任：直接写入。",
+    "trustHint": "只读：写操作被拒。信任：直接写入，事后可在应用内撤销。",
+    "allowCreateAccount": "允许 AI 自动建账户",
+    "allowCreateAccountHint": "默认关闭：账户一旦被分录引用就删不干净了。",
     "token": "访问令牌",
     "resetToken": "重置令牌",
     "clientConfig": "客户端配置",
@@ -926,22 +937,6 @@
       "expense": "支出",
       "income": "收入",
       "transfer": "转账"
-    },
-    "approval": {
-      "title": "外部应用请求写入账本",
-      "transactionDesc": "一个 MCP 客户端请求记一笔交易。确认后立即落库，无撤销。",
-      "createAccountDesc": "一个 MCP 客户端请求新建账户。确认后立即创建。",
-      "amount": "金额",
-      "kind": "类型",
-      "date": "日期",
-      "source": "转出账户",
-      "destination": "转入账户",
-      "category": "分类",
-      "path": "账户路径",
-      "openingBalance": "期初余额",
-      "description": "备注",
-      "approve": "确认写入",
-      "reject": "拒绝"
     }
   }
 }

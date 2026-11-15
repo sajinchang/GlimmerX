@@ -4,14 +4,15 @@ import { cn } from "@/lib/utils";
 import { AlertTriangle } from "lucide-react";
 
 /**
- * The proposal summary shown at the top of the AI confirmation card
- * (design doc 25, §4.2). It renders what the AI *originally* proposed —
- * the editable form below it is where the user corrects it.
+ * The proposal summary shown on the AI receipt (design doc 25, §4.2).
  *
- * The warnings block is the point of this component: every "guessed on your
- * behalf" decision (fuzzy account match, new category, default-account
- * fallback) must be visible before anything is written, because the book is
- * hard-delete with no undo.
+ * Since the entry is written before this renders, the block is no longer a
+ * "check before saving" gate — it is the record of what the AI decided, next to
+ * the buttons that undo or correct it.
+ *
+ * The warnings block is still the point of this component: every "guessed on
+ * your behalf" decision (fuzzy account match, new category, default-account
+ * fallback) must be visible, because undo only helps if the user notices.
  */
 export function ProposalReview({
   proposal,

@@ -8,7 +8,6 @@ import type {
   AiProposal,
   AutoMatchResult,
   CreateSavingsGoalInput,
-  McpApprovalRequest,
   McpConfig,
   McpTrustMode,
   ReconcilePreview,
@@ -392,6 +391,21 @@ export async function quickAddTransaction(
   return invokeCommand<TransactionDto>("quick_add_transaction", { input });
 }
 
+/**
+ * Replace an existing transaction from semantic input (the AI receipt's
+ * "something's wrong" path). Delete + re-create happen in one backend
+ * transaction, so a rejected re-create leaves the original intact.
+ */
+export async function quickReplaceTransaction(
+  id: string,
+  input: QuickAddInput,
+): Promise<TransactionDto> {
+  return invokeCommand<TransactionDto>("quick_replace_transaction", {
+    id,
+    input,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // AI commands
 // ---------------------------------------------------------------------------
@@ -732,6 +746,7 @@ export async function mcpSetConfig(input: {
   enabled?: boolean;
   port?: number;
   trust?: McpTrustMode;
+  allowCreateAccount?: boolean;
 }): Promise<McpConfig> {
   return invokeCommand<McpConfig>("mcp_set_config", input);
 }
@@ -742,13 +757,3 @@ export async function mcpResetToken(): Promise<McpConfig> {
 }
 
 /** Resolve the pending approval; false = the request was already handled. */
-export async function mcpApproveRequest(
-  requestId: string,
-  approved: boolean,
-): Promise<boolean> {
-  return invokeCommand<boolean>("mcp_approve_request", { requestId, approved });
-}
-
-export async function mcpCurrentApproval(): Promise<McpApprovalRequest | null> {
-  return invokeCommand<McpApprovalRequest | null>("mcp_current_approval");
-}

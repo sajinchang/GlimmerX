@@ -26,7 +26,34 @@ pub fn quick_add_transaction(
     input: &QuickAddInput,
 ) -> Result<TransactionWithPostings, AppError> {
     let tx = conn.unchecked_transaction()?;
+    let result = insert_by_quick_add(&tx, input)?;
+    tx.commit()?;
+    Ok(result)
+}
 
+/// Replace an existing transaction with a fresh one derived from the same
+/// semantic input, in a single transaction.
+///
+/// This is the AI edit path (design doc 25, §4.2): the user corrects the fields
+/// on the receipt, and the backend re-derives postings instead of trusting a
+/// client-built entry list. Deleting and re-creating inside one transaction is
+/// what keeps a failed re-create from losing the original.
+pub fn replace_by_quick_add(
+    conn: &mut Connection,
+    tx_id: &str,
+    input: &QuickAddInput,
+) -> Result<TransactionWithPostings, AppError> {
+    let tx = conn.unchecked_transaction()?;
+    super::delete::delete_rows_checked(&tx, tx_id)?;
+    let result = insert_by_quick_add(&tx, input)?;
+    tx.commit()?;
+    Ok(result)
+}
+
+fn insert_by_quick_add(
+    conn: &Connection,
+    input: &QuickAddInput,
+) -> Result<TransactionWithPostings, AppError> {
     let mut resolved = input.clone();
     // A caller-supplied category id wins: it already resolved the name (and
     // verified the type), so re-resolving by name could land elsewhere.
@@ -44,14 +71,14 @@ pub fn quick_add_transaction(
             }
         };
         resolved.category_id = Some(crate::db::categories::resolve_or_create(
-            &tx,
+            conn,
             &name,
             &category_type,
         )?);
     }
 
     let amount_cents = validate_quick_add_input(&resolved)?;
-    let postings = derive_postings(&tx, &resolved, amount_cents)?;
+    let postings = derive_postings(conn, &resolved, amount_cents)?;
 
     let date = resolved
         .date
@@ -59,11 +86,10 @@ pub fn quick_add_transaction(
         .unwrap_or_else(crate::utils::time::today_date);
     let description = resolved.description.clone().unwrap_or_default();
 
-    let tx_id = create_transaction(&tx, &date, &description, &postings)?;
+    let tx_id = create_transaction(conn, &date, &description, &postings)?;
 
-    let result = get_transaction_with_postings(&tx, &tx_id)?
+    let result = get_transaction_with_postings(conn, &tx_id)?
         .ok_or_else(|| AppError::DatabaseError("Created transaction not found".to_string()))?;
-    tx.commit()?;
     Ok(result)
 }
 

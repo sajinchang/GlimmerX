@@ -21,7 +21,7 @@ pub use create::create_transaction;
 pub use delete::{delete_transaction, get_delete_preview};
 pub use paginate::list_transactions_paginated;
 pub use query::{get_transaction_detail, get_transaction_with_postings, list_transactions};
-pub use quick_add::quick_add_transaction;
+pub use quick_add::{quick_add_transaction, replace_by_quick_add};
 #[allow(unused_imports)]
 pub use types::{
     DeletePreview, PaginationInfo, PostingDetail, PostingInput, PostingRecord, QuickAddInput,

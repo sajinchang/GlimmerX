@@ -2,9 +2,19 @@ import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { aiParseTransaction, accountCreate } from "@/utils/api";
+import {
+  aiParseTransaction,
+  accountCreate,
+  quickAddTransaction,
+  transactionDelete,
+} from "@/utils/api";
 import { translateErrorMessage } from "@/utils/errorTranslation";
-import type { AiProposal, QuickAddInitial } from "@/types";
+import type {
+  AiProposal,
+  QuickAddInitial,
+  QuickAddInput,
+  TransactionDto,
+} from "@/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -33,9 +43,15 @@ interface AiInputDialogProps {
   onSuccess?: () => void;
 }
 
-type Stage = "input" | "confirmTransaction" | "confirmAccount";
+/**
+ * `receipt` is not a confirmation step: by the time it appears the transaction
+ * is already in the ledger (design doc 25, §4.2). It exists so the user can see
+ * what was written, undo it, or correct it — "optimistic write + undo" replaces
+ * the old blocking confirmation card.
+ */
+type Stage = "input" | "receipt" | "edit" | "confirmAccount";
 
-/** Map an AI proposal onto the QuickAddDialog review prefill. */
+/** Map an AI proposal onto the QuickAddDialog prefill / edit form. */
 function toQuickAddInitial(proposal: AiProposal): QuickAddInitial {
   return {
     mode: proposal.action as QuickAddInitial["mode"],
@@ -51,6 +67,19 @@ function toQuickAddInitial(proposal: AiProposal): QuickAddInitial {
   };
 }
 
+/** The same mapping, as the semantic input the write commands take. */
+function toQuickAddInput(proposal: AiProposal): QuickAddInput {
+  return {
+    mode: proposal.action as QuickAddInput["mode"],
+    amount: proposal.amount ?? "",
+    sourceAccountId: proposal.sourceAccount?.id,
+    destinationAccountId: proposal.destinationAccount?.id,
+    categoryName: proposal.categoryName,
+    description: proposal.description,
+    date: proposal.date,
+  };
+}
+
 export function AiInputDialog({
   open,
   onOpenChange,
@@ -62,6 +91,9 @@ export function AiInputDialog({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [stage, setStage] = useState<Stage>("input");
   const [proposal, setProposal] = useState<AiProposal | null>(null);
+  // What actually landed in the ledger; the receipt describes this, not the
+  // proposal, because the two can differ (trimmed name, resolved category).
+  const [committed, setCommitted] = useState<TransactionDto | null>(null);
   // Editable fields for the create_account confirmation card.
   const [accountPath, setAccountPath] = useState("");
   const [accountKind, setAccountKind] = useState<"asset" | "liability">(
@@ -75,17 +107,52 @@ export function AiInputDialog({
       setSubmitError(null);
       setStage("input");
       setProposal(null);
+      setCommitted(null);
       setAccountPath("");
       setAccountKind("asset");
       setOpeningBalance("");
     }
   }, [open]);
 
+  const invalidateLedger = () => {
+    queryClient.invalidateQueries({
+      predicate: (query) =>
+        query.queryKey[0] === "transactionListPaginated" ||
+        query.queryKey[0] === "transactionDetail" ||
+        query.queryKey[0] === "dashboardSummary",
+    });
+    queryClient.invalidateQueries({ queryKey: ["accounts"] });
+    queryClient.invalidateQueries({ queryKey: ["categories"] });
+  };
+
+  /**
+   * Writing straight away is the point: no state to persist, no countdown, no
+   * recovery after a crash. A failure leaves nothing behind.
+   */
+  const commitMutation = useMutation({
+    mutationFn: (result: AiProposal) =>
+      quickAddTransaction(toQuickAddInput(result)),
+    onSuccess: (transaction, result) => {
+      setProposal(result);
+      setCommitted(transaction);
+      setStage("receipt");
+      invalidateLedger();
+      onSuccess?.();
+    },
+    onError: (err) => {
+      // Nothing was written, so we can simply fall back to the input stage.
+      setSubmitError(translateErrorMessage(err, t));
+      setStage("input");
+    },
+  });
+
   const parseMutation = useMutation({
     mutationFn: (input: string) => aiParseTransaction(input),
     onSuccess: (result) => {
       setSubmitError(null);
       if (result.action === "create_account") {
+        // The one exception: an account cannot be un-created cheaply, so it
+        // still asks before writing (§4.2 risk table).
         setProposal(result);
         setAccountPath(result.accountPath ?? "");
         setAccountKind(
@@ -93,14 +160,26 @@ export function AiInputDialog({
         );
         setOpeningBalance(result.openingBalance ?? "");
         setStage("confirmAccount");
-      } else {
-        setProposal(result);
-        setStage("confirmTransaction");
+        return;
       }
-      // Recognition succeeded — the dialog stays open for confirmation.
+      commitMutation.mutate(result);
     },
     onError: (err) => {
       setSubmitError(translateErrorMessage(err, t));
+    },
+  });
+
+  const undoMutation = useMutation({
+    mutationFn: (id: string) => transactionDelete(id),
+    onSuccess: () => {
+      invalidateLedger();
+      toast.success(t("ai.receipt.undoSuccess"));
+      onOpenChange(false);
+    },
+    onError: (err) => {
+      toast.error(
+        `${t("ai.receipt.undoFailed")}: ${translateErrorMessage(err, t)}`,
+      );
     },
   });
 
@@ -118,7 +197,8 @@ export function AiInputDialog({
     },
   });
 
-  const canSubmit = text.trim().length > 0 && !parseMutation.isPending;
+  const busy = parseMutation.isPending || commitMutation.isPending;
+  const canSubmit = text.trim().length > 0 && !busy;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -143,20 +223,28 @@ export function AiInputDialog({
   const backToInput = () => {
     setStage("input");
     setProposal(null);
+    setCommitted(null);
     setSubmitError(null);
   };
 
   return (
     <>
       <Dialog
-        open={open && (stage === "input" || stage === "confirmAccount")}
+        open={
+          open &&
+          (stage === "input" ||
+            stage === "receipt" ||
+            stage === "confirmAccount")
+        }
         onOpenChange={onOpenChange}
       >
         <DialogContent className="sm:max-w-md" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Sparkles className="h-5 w-5" />
-              {stage === "input" ? t("ai.title") : t("ai.review.title")}
+              {stage === "input" && t("ai.title")}
+              {stage === "receipt" && t("ai.receipt.title")}
+              {stage === "confirmAccount" && t("ai.review.title")}
             </DialogTitle>
           </DialogHeader>
 
@@ -169,7 +257,7 @@ export function AiInputDialog({
                   placeholder={t("ai.inputPlaceholder")}
                   className="min-h-[80px] resize-none"
                   autoFocus
-                  disabled={parseMutation.isPending}
+                  disabled={busy}
                 />
 
                 {submitError && (
@@ -182,12 +270,12 @@ export function AiInputDialog({
                   type="button"
                   variant="outline"
                   onClick={() => onOpenChange(false)}
-                  disabled={parseMutation.isPending}
+                  disabled={busy}
                 >
                   {t("common.cancel")}
                 </Button>
                 <Button type="submit" disabled={!canSubmit}>
-                  {parseMutation.isPending ? (
+                  {busy ? (
                     <>
                       <Loader2 className="h-4 w-4 animate-spin" />
                       {t("ai.recognizing")}
@@ -198,6 +286,43 @@ export function AiInputDialog({
                 </Button>
               </DialogFooter>
             </form>
+          )}
+
+          {stage === "receipt" && proposal && committed && (
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                {t("ai.receipt.saved")}
+              </p>
+
+              <ProposalReview proposal={proposal} />
+
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => undoMutation.mutate(committed.id)}
+                  disabled={undoMutation.isPending}
+                >
+                  {t("ai.receipt.undo")}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setStage("edit")}
+                >
+                  {t("ai.receipt.issue")}
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => {
+                    // Nothing to do — the entry is already saved.
+                    onOpenChange(false);
+                  }}
+                >
+                  {t("ai.receipt.done")}
+                </Button>
+              </DialogFooter>
+            </div>
           )}
 
           {stage === "confirmAccount" && proposal && (
@@ -283,15 +408,17 @@ export function AiInputDialog({
         </DialogContent>
       </Dialog>
 
-      {stage === "confirmTransaction" && proposal && (
+      {stage === "edit" && proposal && committed && (
         <QuickAddDialog
           open={open}
           variant="review"
           initial={toQuickAddInitial(proposal)}
+          replaceId={committed.id}
           onOpenChange={(nextOpen) => {
-            if (!nextOpen) backToInput();
+            if (!nextOpen) setStage("receipt");
           }}
           onSuccess={() => {
+            // The entry was replaced in place; there is nothing left to review.
             toast.success(t("ai.success"));
             onOpenChange(false);
             onSuccess?.();

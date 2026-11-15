@@ -2,7 +2,12 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { AiProposal, QuickAddInput, QuickAddInitial } from "@/types";
-import { accountList, categoryList, quickAddTransaction } from "@/utils/api";
+import {
+  accountList,
+  categoryList,
+  quickAddTransaction,
+  quickReplaceTransaction,
+} from "@/utils/api";
 import { QUERY_CONFIG } from "@/constants/query";
 import { translateErrorMessage } from "@/utils/errorTranslation";
 import { todayLocalDate } from "@/utils/date";
@@ -49,12 +54,15 @@ interface QuickAddDialogProps {
   onSuccess?: () => void;
   /**
    * "create" (default): blank form on open.
-   * "review": prefilled from an AI proposal — the form IS the confirmation
-   * card (design doc 25, §4.2); the user edits and confirms before any write.
+   * "review": prefilled from an AI proposal and used as the edit form behind
+   * the AI receipt (design doc 25, §4.2). The write already happened, so with
+   * `replaceId` set the submit replaces that transaction instead of adding one.
    * Requires `initial` when set.
    */
   variant?: "create" | "review";
   initial?: QuickAddInitial;
+  /** Replace this transaction on submit instead of creating a new one. */
+  replaceId?: string;
 }
 
 export function QuickAddDialog({
@@ -63,6 +71,7 @@ export function QuickAddDialog({
   onSuccess,
   variant = "create",
   initial,
+  replaceId,
 }: QuickAddDialogProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -170,7 +179,10 @@ export function QuickAddDialog({
   }, [open]);
 
   const mutation = useMutation({
-    mutationFn: (input: QuickAddInput) => quickAddTransaction(input),
+    mutationFn: (input: QuickAddInput) =>
+      replaceId
+        ? quickReplaceTransaction(replaceId, input)
+        : quickAddTransaction(input),
     onSuccess: () => {
       queryClient.invalidateQueries({
         predicate: (query) =>

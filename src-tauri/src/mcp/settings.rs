@@ -3,7 +3,7 @@
 //! All four keys live in the encrypted `settings` table, so they are only
 //! readable while the ledger is unlocked — which is also when the server
 //! itself is allowed to exist. Defaults: disabled, port 17823, a random
-//! token generated on first read, trust mode "confirm".
+//! token generated on first read, trust mode read-only.
 
 use rusqlite::Connection;
 use serde::Serialize;
@@ -15,18 +15,24 @@ pub const KEY_ENABLED: &str = "mcp.enabled";
 pub const KEY_PORT: &str = "mcp.port";
 pub const KEY_TOKEN: &str = "mcp.token";
 pub const KEY_TRUST: &str = "mcp.trust";
+/// Whether the agent may create accounts. Off by default: an account is not
+/// cheaply undoable once postings point at it (design doc 25, §4.3).
+pub const KEY_ALLOW_CREATE_ACCOUNT: &str = "mcp.allow_create_account";
 
 pub const DEFAULT_PORT: u16 = 17823;
 
 /// Trust tier for MCP write tools (design doc 25, §5.4).
+///
+/// Two tiers only. The old `confirm` tier asked the user through a Tauri event,
+/// which is an out-of-band channel no MCP client can answer — an external agent
+/// just waited out the timeout. It was retired in favour of "write, then undo",
+/// matching the in-app AI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TrustMode {
-    /// Write tools are rejected outright. The default for unknown agents.
+    /// Write tools are rejected outright. The default.
     ReadOnly,
-    /// Writes wait for user approval (single slot, 120s timeout).
-    Confirm,
-    /// Writes go straight through; the audit log is the only trace.
+    /// Writes go straight through; the user can undo them in GlimmerX.
     Trust,
 }
 
@@ -34,15 +40,16 @@ impl TrustMode {
     pub fn as_str(self) -> &'static str {
         match self {
             TrustMode::ReadOnly => "readonly",
-            TrustMode::Confirm => "confirm",
             TrustMode::Trust => "trust",
         }
     }
 
+    /// Note the deliberate omission of `"confirm"`: a ledger written by an
+    /// older build falls back to the safe default (read-only) rather than
+    /// silently granting write access.
     pub(in crate::mcp) fn parse(value: &str) -> Option<Self> {
         match value {
             "readonly" => Some(TrustMode::ReadOnly),
-            "confirm" => Some(TrustMode::Confirm),
             "trust" => Some(TrustMode::Trust),
             _ => None,
         }
@@ -56,6 +63,10 @@ pub struct McpConfig {
     pub port: u16,
     pub token: String,
     pub trust: TrustMode,
+    /// Gate for the `create_account` tool, separate from the trust tier: the
+    /// user can trust an agent to record spending without letting it invent
+    /// accounts.
+    pub allow_create_account: bool,
 }
 
 impl Default for McpConfig {
@@ -64,7 +75,8 @@ impl Default for McpConfig {
             enabled: false,
             port: DEFAULT_PORT,
             token: new_token(),
-            trust: TrustMode::Confirm,
+            trust: TrustMode::ReadOnly,
+            allow_create_account: false,
         }
     }
 }
@@ -86,11 +98,16 @@ pub fn load_config(conn: &Connection) -> Result<McpConfig, AppError> {
     let port = get_setting(conn, KEY_PORT)?
         .and_then(|v| v.parse::<u16>().ok())
         .unwrap_or(DEFAULT_PORT);
+    // `unwrap_or(ReadOnly)` is the second default site: `McpConfig::default`
+    // cannot be reached from here, and both must agree.
     let trust = get_setting(conn, KEY_TRUST)?
         .and_then(|v| TrustMode::parse(&v))
-        .unwrap_or(TrustMode::Confirm);
+        .unwrap_or(TrustMode::ReadOnly);
     // The token is generated once and persisted; a missing row means the
     // server was never enabled, so the generated token is written back.
+    let allow_create_account = get_setting(conn, KEY_ALLOW_CREATE_ACCOUNT)?
+        .map(|v| v == "true")
+        .unwrap_or(false);
     let token = match get_setting(conn, KEY_TOKEN)? {
         Some(existing) if !existing.is_empty() => existing,
         _ => {
@@ -105,6 +122,7 @@ pub fn load_config(conn: &Connection) -> Result<McpConfig, AppError> {
         port,
         token,
         trust,
+        allow_create_account,
     })
 }
 
@@ -127,6 +145,15 @@ pub fn save_port(conn: &Connection, port: u16) -> Result<(), AppError> {
 
 /// Persist the trust mode. Invalid values are an error, never a silent
 /// fallback — a mistyped trust tier is a security decision.
+/// Persist the account-creation gate.
+pub fn save_allow_create_account(conn: &Connection, allow: bool) -> Result<(), AppError> {
+    set_setting(
+        conn,
+        KEY_ALLOW_CREATE_ACCOUNT,
+        if allow { "true" } else { "false" },
+    )
+}
+
 pub fn save_trust(conn: &Connection, trust: &str) -> Result<(), AppError> {
     match TrustMode::parse(trust) {
         Some(_) => set_setting(conn, KEY_TRUST, trust),
@@ -154,7 +181,7 @@ mod tests {
         let config = load_config(&conn).unwrap();
         assert!(!config.enabled);
         assert_eq!(config.port, DEFAULT_PORT);
-        assert_eq!(config.trust, TrustMode::Confirm);
+        assert_eq!(config.trust, TrustMode::ReadOnly);
         assert_eq!(config.token.len(), 64);
         // Second load returns the same token (persisted, not regenerated).
         assert_eq!(load_config(&conn).unwrap().token, config.token);
@@ -178,7 +205,38 @@ mod tests {
         assert!(save_trust(&conn, "yolo").is_err());
         // Corrupt value in the table falls back to the safe default.
         set_setting(&conn, KEY_TRUST, "garbage").unwrap();
-        assert_eq!(load_config(&conn).unwrap().trust, TrustMode::Confirm);
+        assert_eq!(load_config(&conn).unwrap().trust, TrustMode::ReadOnly);
+    }
+
+    #[test]
+    fn test_allow_create_account_defaults_off_and_round_trips() {
+        let (_dir, conn) = test_conn();
+        assert!(
+            !load_config(&conn).unwrap().allow_create_account,
+            "creating accounts is denied until the user opts in"
+        );
+
+        save_allow_create_account(&conn, true).unwrap();
+        assert!(load_config(&conn).unwrap().allow_create_account);
+        assert_eq!(
+            get_setting(&conn, KEY_ALLOW_CREATE_ACCOUNT).unwrap().as_deref(),
+            Some("true")
+        );
+
+        save_allow_create_account(&conn, false).unwrap();
+        assert!(!load_config(&conn).unwrap().allow_create_account);
+    }
+
+    #[test]
+    fn test_legacy_confirm_tier_falls_back_to_read_only() {
+        // A ledger written by a build that still had the confirm tier: the
+        // value is now unknown, and an unknown tier must never grant writes.
+        let (_dir, conn) = test_conn();
+        set_setting(&conn, KEY_TRUST, "confirm").unwrap();
+        assert_eq!(load_config(&conn).unwrap().trust, TrustMode::ReadOnly);
+        // And it stays a value the app can overwrite.
+        assert!(save_trust(&conn, "trust").is_ok());
+        assert_eq!(load_config(&conn).unwrap().trust, TrustMode::Trust);
     }
 
     #[test]

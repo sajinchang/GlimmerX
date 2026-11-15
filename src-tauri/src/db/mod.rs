@@ -6,6 +6,7 @@ pub mod accounts;
 pub mod budgets;
 pub mod categories;
 pub mod dashboard;
+pub mod idempotency;
 mod migrations;
 mod recent_dbs;
 pub mod reconcile;

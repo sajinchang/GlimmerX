@@ -24,7 +24,8 @@ const baseConfig = {
   port: 17823,
   actualPort: null,
   running: false,
-  trustMode: "confirm",
+  trustMode: "readonly",
+  allowCreateAccount: false,
   token: "a".repeat(64),
 };
 
@@ -54,7 +55,9 @@ describe("McpSettingsSection", () => {
     render(<McpSettingsSection />);
     await screen.findByDisplayValue("a".repeat(64));
 
-    const toggle = screen.getByRole("switch");
+    // Two switches now (server on/off and account creation); the server
+    // toggle is the first one in the section.
+    const toggle = screen.getAllByRole("switch")[0]!;
     // Radix Switch needs the pointer lifecycle in jsdom, a bare click is a
     // no-op on it.
     fireEvent.pointerDown(toggle);
@@ -75,15 +78,17 @@ describe("McpSettingsSection", () => {
     render(<McpSettingsSection />);
     await screen.findByDisplayValue("a".repeat(64));
 
-    // Open the trust select (shadcn Select) and pick the read-only tier.
+    // Open the trust select (shadcn Select) and move it off the default.
+    // Picking the tier that is already selected fires no change event, and
+    // read-only is the default now.
     fireEvent.click(screen.getByRole("combobox"));
     const option = await screen.findByRole("option", {
-      name: /只读|Read-only/,
+      name: /信任|write directly/i,
     });
     fireEvent.click(option);
 
     await waitFor(() => {
-      expect(mockSet).toHaveBeenCalledWith({ trust: "readonly" });
+      expect(mockSet).toHaveBeenCalledWith({ trust: "trust" });
     });
   });
 

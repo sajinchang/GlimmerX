@@ -9,6 +9,8 @@ vi.mock("@/utils/api", () => ({
   setUiLanguage: vi.fn().mockResolvedValue(undefined),
   aiParseTransaction: vi.fn(),
   quickAddTransaction: vi.fn(),
+  quickReplaceTransaction: vi.fn(),
+  transactionDelete: vi.fn(),
   accountCreate: vi.fn(),
   accountList: vi.fn().mockResolvedValue([]),
   categoryList: vi.fn().mockResolvedValue([]),
@@ -19,10 +21,17 @@ vi.mock("@/utils/errorTranslation", () => ({
   translateErrorMessage: vi.fn((err) => String(err)),
 }));
 
-import { aiParseTransaction, accountCreate } from "@/utils/api";
+import {
+  aiParseTransaction,
+  accountCreate,
+  quickAddTransaction,
+  transactionDelete,
+} from "@/utils/api";
 
 const mockAiParse = aiParseTransaction as ReturnType<typeof vi.fn>;
 const mockAccountCreate = accountCreate as ReturnType<typeof vi.fn>;
+const mockQuickAdd = quickAddTransaction as ReturnType<typeof vi.fn>;
+const mockDelete = transactionDelete as ReturnType<typeof vi.fn>;
 
 function renderWithProviders(ui: React.ReactElement) {
   const queryClient = new QueryClient({
@@ -63,8 +72,9 @@ describe("AiInputDialog", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("submits text and moves to the confirmation card without closing", async () => {
+  it("writes immediately and shows an undoable receipt", async () => {
     mockAiParse.mockResolvedValueOnce(expenseProposal);
+    mockQuickAdd.mockResolvedValueOnce({ id: "tx-1" });
     const onOpenChange = vi.fn();
 
     renderWithProviders(
@@ -74,27 +84,80 @@ describe("AiInputDialog", () => {
     const input = screen.getByPlaceholderText(/中午吃饭|Lunch/i);
     fireEvent.change(input, { target: { value: "中午吃饭18元" } });
 
-    const button = screen.getByRole("button", { name: /识别并录入|Parse/i });
-    fireEvent.click(button);
+    fireEvent.click(screen.getByRole("button", { name: /识别并录入|Parse/i }));
 
     await waitFor(() => {
       expect(mockAiParse).toHaveBeenCalledWith("中午吃饭18元");
     });
 
-    // Recognition succeeded: the dialog must NOT close — the user still has
-    // to confirm the proposal (design doc 25, §4.2).
+    // Optimistic write (design doc 25, §4.2): the transaction is committed
+    // before the user sees anything, with semantic fields only — the client
+    // never builds postings.
     await waitFor(() => {
-      expect(screen.getByText("确认记账")).toBeInTheDocument();
+      expect(mockQuickAdd).toHaveBeenCalledWith(
+        expect.objectContaining({
+          mode: "expense",
+          amount: "12.50",
+          sourceAccountId: "acc-1",
+          categoryName: "餐饮",
+        }),
+      );
     });
-    expect(onOpenChange).not.toHaveBeenCalledWith(false);
 
-    // The proposal summary with its warning is visible on the card.
+    // The receipt is not a gate: the dialog stays open so the user can look,
+    // undo, or correct — but nothing waits on them.
+    await waitFor(() => {
+      expect(
+        screen.getByText(/已录入，看看对不对|Saved — does this look right/),
+      ).toBeInTheDocument();
+    });
     expect(screen.getByTestId("proposal-review")).toBeInTheDocument();
     expect(screen.getByText(/分类「餐饮」是新建的/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /撤销|Undo/ }),
+    ).toBeInTheDocument();
+  });
 
-    // The prefilled amount survived the dialog's reset effects.
-    const amount = screen.getByLabelText(/金额|Amount/) as HTMLInputElement;
-    expect(amount.value).toBe("12.50");
+  it("undo deletes the transaction it just wrote", async () => {
+    mockAiParse.mockResolvedValueOnce(expenseProposal);
+    mockQuickAdd.mockResolvedValueOnce({ id: "tx-1" });
+    mockDelete.mockResolvedValueOnce(undefined);
+
+    renderWithProviders(<AiInputDialog open={true} onOpenChange={vi.fn()} />);
+
+    fireEvent.change(screen.getByPlaceholderText(/中午吃饭|Lunch/i), {
+      target: { value: "中午吃饭18元" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /识别并录入|Parse/i }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: /撤销|Undo/ }),
+      ).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /撤销|Undo/ }));
+
+    await waitFor(() => {
+      expect(mockDelete).toHaveBeenCalledWith("tx-1");
+    });
+  });
+
+  it("returns to the input stage when the write is rejected", async () => {
+    mockAiParse.mockResolvedValueOnce(expenseProposal);
+    mockQuickAdd.mockRejectedValueOnce(new Error("errors.databaseLocked"));
+
+    renderWithProviders(<AiInputDialog open={true} onOpenChange={vi.fn()} />);
+
+    fireEvent.change(screen.getByPlaceholderText(/中午吃饭|Lunch/i), {
+      target: { value: "中午吃饭18元" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /识别并录入|Parse/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/errors\.databaseLocked/)).toBeInTheDocument();
+    });
+    // Nothing was written, so the user is back where they started.
+    expect(screen.getByPlaceholderText(/中午吃饭|Lunch/i)).toBeInTheDocument();
   });
 
   it("routes create_account proposals to the account confirmation card", async () => {

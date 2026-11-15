@@ -8,7 +8,6 @@ use tauri::State;
 
 use crate::db::AppError;
 use crate::mcp;
-use crate::mcp::approval::ApprovalSlot;
 use crate::mcp::host::{DbFn, McpHost};
 use crate::mcp::McpRuntime;
 
@@ -24,6 +23,8 @@ pub struct McpConfigDto {
     pub actual_port: Option<u16>,
     pub running: bool,
     pub trust_mode: String,
+    /// Whether the agent may call `create_account` (design doc 25, §4.3).
+    pub allow_create_account: bool,
     pub token: String,
 }
 
@@ -51,6 +52,7 @@ pub async fn mcp_get_config(runtime: State<'_, McpRuntime>) -> Result<McpConfigD
         actual_port: status.port,
         running: status.running,
         trust_mode: config.trust.as_str().to_string(),
+        allow_create_account: config.allow_create_account,
         token: config.token,
     })
 }
@@ -62,6 +64,7 @@ pub async fn mcp_set_config(
     enabled: Option<bool>,
     port: Option<u16>,
     trust: Option<String>,
+    allow_create_account: Option<bool>,
 ) -> Result<McpConfigDto, String> {
     host_update(&runtime, move |conn| {
         if let Some(enabled) = enabled {
@@ -75,6 +78,9 @@ pub async fn mcp_set_config(
         }
         if let Some(ref trust) = trust {
             mcp::settings::save_trust(conn, trust).map_err(|e| e.to_string())?;
+        }
+        if let Some(allow) = allow_create_account {
+            mcp::settings::save_allow_create_account(conn, allow).map_err(|e| e.to_string())?;
         }
         Ok(())
     })?;
@@ -95,39 +101,18 @@ pub async fn mcp_reset_token(runtime: State<'_, McpRuntime>) -> Result<McpConfig
     mcp_get_config(runtime).await
 }
 
-/// Resolve the pending approval request (the webview confirmation card).
-/// Returns Ok(false) when the id no longer matches the pending request —
-/// the card is stale, which the UI treats as "already handled".
-#[tauri::command]
-pub async fn mcp_approve_request(
-    request_id: String,
-    approved: bool,
-    state: State<'_, ApprovalSlot>,
-) -> Result<bool, String> {
-    Ok(state.resolve(&request_id, approved))
-}
-
-/// Re-fetch the pending approval (e.g. after a window refocus).
-#[tauri::command]
-pub async fn mcp_current_approval(
-    state: State<'_, ApprovalSlot>,
-) -> Result<Option<mcp::approval::ApprovalRequest>, String> {
-    Ok(state.current())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::db::{Database, RecentDbs};
-    use crate::mcp::approval::{ApprovalRequest, StageOutcome};
     use crate::mcp::host::McpHost;
     use crate::AppState;
     use std::sync::{Arc, Mutex};
     use tauri::Manager;
     use tempfile::TempDir;
 
-    /// A mock app with an unlocked ledger, an MCP runtime (host injected)
-    /// and an empty approval slot — the surface the mcp commands need.
+    /// A mock app with an unlocked ledger and an MCP runtime (host injected)
+    /// — the surface the mcp commands need.
     fn mock_app() -> (
         tauri::App<tauri::test::MockRuntime>,
         tauri::WebviewWindow<tauri::test::MockRuntime>,
@@ -142,13 +127,10 @@ mod tests {
         let app = tauri::test::mock_builder()
             .manage(state)
             .manage(crate::mcp::McpRuntime::default())
-            .manage(ApprovalSlot::new())
             .invoke_handler(tauri::generate_handler![
                 mcp_get_config,
                 mcp_set_config,
                 mcp_reset_token,
-                mcp_approve_request,
-                mcp_current_approval,
             ])
             .build(tauri::test::mock_context(tauri::test::noop_assets()))
             .unwrap();
@@ -180,15 +162,6 @@ mod tests {
             .map(|b| b.deserialize::<serde_json::Value>().unwrap())
     }
 
-    fn pending(id: &str) -> ApprovalRequest {
-        ApprovalRequest {
-            request_id: id.to_string(),
-            tool: "record_transaction".into(),
-            request: serde_json::json!({"kind": "expense"}),
-            created_at: "2026-11-14T12:00:00Z".into(),
-        }
-    }
-
     #[test]
     fn test_dto_field_names_are_camel_case() {
         // Lock the wire contract with the frontend type in one line.
@@ -197,7 +170,8 @@ mod tests {
             port: 17823,
             actual_port: None,
             running: false,
-            trust_mode: "confirm".into(),
+            trust_mode: "trust".into(),
+            allow_create_account: false,
             token: "t".repeat(64),
         })
         .unwrap()
@@ -213,6 +187,7 @@ mod tests {
             fields,
             vec![
                 "actualPort".to_string(),
+                "allowCreateAccount".to_string(),
                 "enabled".to_string(),
                 "port".to_string(),
                 "running".to_string(),
@@ -236,7 +211,7 @@ mod tests {
         let config = invoke(&webview, "mcp_get_config", serde_json::json!({})).unwrap();
         assert_eq!(config["enabled"], false);
         assert_eq!(config["port"], 17823);
-        assert_eq!(config["trustMode"], "confirm");
+        assert_eq!(config["trustMode"], "readonly");
         assert_eq!(config["token"].as_str().unwrap().len(), 64);
         assert!(config["running"] == false);
     }
@@ -312,37 +287,5 @@ mod tests {
             .unwrap()
             .to_string();
         assert_ne!(before, after);
-    }
-
-    #[test]
-    fn test_mcp_approval_resolution() {
-        let (app, webview, _dir) = mock_app();
-        let slot = app.state::<ApprovalSlot>();
-        let StageOutcome::Waiting(_rx) = slot.try_insert(pending("req-1")) else {
-            panic!("insert failed");
-        };
-
-        // Current approval surfaces the pending request.
-        let current = invoke(&webview, "mcp_current_approval", serde_json::json!({})).unwrap();
-        assert_eq!(current["requestId"], "req-1");
-
-        // Matching id resolves and reports success.
-        let matched = invoke(
-            &webview,
-            "mcp_approve_request",
-            serde_json::json!({"requestId": "req-1", "approved": true}),
-        )
-        .unwrap();
-        assert_eq!(matched, true);
-        assert!(slot.current().is_none());
-
-        // A stale id after the slot emptied reports false.
-        let stale = invoke(
-            &webview,
-            "mcp_approve_request",
-            serde_json::json!({"requestId": "gone", "approved": false}),
-        )
-        .unwrap();
-        assert_eq!(stale, false);
     }
 }

@@ -6,11 +6,10 @@
 //! `AppHandle<R: Runtime>` — Wry in production, `MockRuntime` in tests.
 
 use tauri::async_runtime::JoinHandle;
-use tauri::{AppHandle, Emitter, Manager, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 
 use crate::db::{AppError, Database};
 
-use super::approval::{ApprovalRequest, StageOutcome};
 use super::settings::McpConfig;
 use super::{McpRuntime, McpRuntimeStatus};
 
@@ -29,12 +28,6 @@ pub trait McpHost: Send + Sync + 'static {
 
     /// Load the MCP configuration from the settings table.
     fn mcp_config(&self) -> Result<McpConfig, String>;
-
-    /// Stage a pending approval in the single slot.
-    fn try_stage_approval(&self, request: ApprovalRequest) -> StageOutcome;
-
-    /// Broadcast the approval request to the webview.
-    fn emit_approval(&self, request: &ApprovalRequest);
 
     /// Record the serve task + optimistic port; marks the runtime running.
     fn set_runtime_task(&self, task: JoinHandle<()>, port: u16);
@@ -80,17 +73,6 @@ impl<R: Runtime> McpHost for AppHandle<R> {
         with_conn(db, |conn| {
             super::settings::load_config(conn).map_err(|e| e.to_string())
         })
-    }
-
-    fn try_stage_approval(&self, request: ApprovalRequest) -> StageOutcome {
-        self.state::<super::approval::ApprovalSlot>()
-            .try_insert(request)
-    }
-
-    fn emit_approval(&self, request: &ApprovalRequest) {
-        // A missing listener (headless test, closed window) is fine: the
-        // timeout on the tool side cancels the write.
-        let _ = self.emit("ledger://approval", request);
     }
 
     fn set_runtime_task(&self, task: JoinHandle<()>, port: u16) {

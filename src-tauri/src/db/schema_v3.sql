@@ -36,3 +36,19 @@ SELECT id, category_id, datetime('now')
  WHERE category_id IS NOT NULL;
 
 ALTER TABLE transactions DROP COLUMN category_id;
+
+-- Idempotency for MCP write tools (design doc 25, §6).
+--
+-- A caller-supplied key makes a write run at most once. This is *not* an audit
+-- log: it stores no request payload and no actor, only enough state to answer
+-- "did this (tool, key) already happen, and if so what did it return".
+-- Rows are disposable — deleting them costs a retry its protection, nothing
+-- else. Hence no foreign keys and no retention policy.
+CREATE TABLE IF NOT EXISTS automation_idempotency (
+    tool            TEXT NOT NULL,      -- 'record_transaction' | 'create_account'
+    idempotency_key TEXT NOT NULL,
+    status          TEXT NOT NULL,      -- 'in_flight' | 'done'
+    result_json     TEXT,               -- first successful result, replayed verbatim
+    created_at      TEXT NOT NULL,      -- datetime('now'), used for stale takeover
+    PRIMARY KEY (tool, idempotency_key)
+);

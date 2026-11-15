@@ -12,14 +12,20 @@
 use std::sync::Arc;
 
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{CallToolResult, ContentBlock};
+use rmcp::model::{
+    CallToolResult, ContentBlock, Implementation, ListResourceTemplatesResult, ListResourcesResult,
+    PaginatedRequestParams, ProtocolVersion, ReadResourceRequestParams, ReadResourceResponse,
+    ReadResourceResult, Resource, ResourceContents, ResourceTemplate, ResultType,
+    ServerCapabilities, ServerConfig,
+};
 use rmcp::schemars;
+use rmcp::service::{RequestContext, RoleServer};
 use rmcp::tool;
 use rmcp::ErrorData as McpError;
 
+use crate::db::idempotency::{self, Claim};
 use crate::db::AppError;
 use crate::ledger::{self, AccountRef, CategoryRef, LedgerQuery, RecordKind, RecordRequest};
-use crate::mcp::approval::{ApprovalRequest, StageOutcome, APPROVAL_TIMEOUT};
 use crate::mcp::host::{DbFn, McpHost};
 use crate::mcp::settings::TrustMode;
 
@@ -68,6 +74,65 @@ where
         // Domain failures (locked ledger, validation, not-found) are
         // tool-level results the agent can read and act on, not protocol
         // errors, which clients display opaquely.
+        Err(message) => Ok(denied(message)),
+    }
+}
+
+fn to_json_value<T: serde::Serialize>(value: T) -> Result<serde_json::Value, AppError> {
+    serde_json::to_value(value).map_err(|e| AppError::IoError(e.to_string()))
+}
+
+/// [`call_ledger`] with an optional idempotency key (design doc 25, §6).
+///
+/// Claim, write and complete run inside one `with_db` closure so the row and
+/// the write travel on the same connection. The outcome is carried as an
+/// envelope instead of a bespoke `AppError` variant, because every `AppError`
+/// string goes through the UI localiser — an agent wants plain English here.
+fn call_ledger_keyed<T>(
+    host: &Arc<dyn McpHost>,
+    tool: &'static str,
+    key: Option<String>,
+    f: impl FnOnce(&rusqlite::Connection) -> Result<T, AppError> + Send + 'static,
+) -> Result<CallToolResult, McpError>
+where
+    T: serde::Serialize,
+{
+    let boxed: DbFn = Box::new(move |conn| {
+        let Some(key) = key else {
+            // No key: no protection, exactly the old behaviour.
+            let value = to_json_value(f(conn)?)?;
+            return Ok(serde_json::json!({ "outcome": "written", "value": value }));
+        };
+        match idempotency::claim(conn, tool, &key)? {
+            // The first call already wrote this; replay its result untouched.
+            Claim::Done(previous) => {
+                Ok(serde_json::json!({ "outcome": "replayed", "value": previous }))
+            }
+            Claim::InFlight => Ok(serde_json::json!({ "outcome": "in_flight" })),
+            Claim::Proceed => match f(conn) {
+                Ok(written) => {
+                    let value = to_json_value(written)?;
+                    idempotency::complete(conn, tool, &key, &value)?;
+                    Ok(serde_json::json!({ "outcome": "written", "value": value }))
+                }
+                Err(err) => {
+                    // A failed write must release its key, otherwise every
+                    // retry is answered "still processing" forever.
+                    let _ = idempotency::abandon(conn, tool, &key);
+                    Err(err)
+                }
+            },
+        }
+    });
+    match host.with_db(boxed) {
+        Ok(envelope) => {
+            if envelope["outcome"] == "in_flight" {
+                return Ok(denied(
+                    "This idempotency_key is still being processed by an earlier call. Retry after it finishes.",
+                ));
+            }
+            ok_json(envelope["value"].clone())
+        }
         Err(message) => Ok(denied(message)),
     }
 }
@@ -123,6 +188,11 @@ struct RecordTransactionParams {
     /// P&L category name (expense/income only; resolved or created).
     #[serde(default)]
     category: Option<String>,
+    /// Optional retry guard: repeating the same key never books a second
+    /// transaction — the first result is replayed instead. Use one key per
+    /// logical write, and a new key for a genuinely new write.
+    #[serde(default)]
+    idempotency_key: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -138,6 +208,10 @@ struct CreateAccountParams {
     /// Opening-balance date, YYYY-MM-DD. Defaults to today.
     #[serde(default)]
     opening_balance_date: Option<String>,
+    /// Optional retry guard: repeating the same key never creates a second
+    /// account — the first result is replayed instead.
+    #[serde(default)]
+    idempotency_key: Option<String>,
 }
 
 impl LedgerTools {
@@ -147,11 +221,13 @@ impl LedgerTools {
 
     /// Trust-gate a write tool. `Ok(())` = proceed; `Err(result)` = the
     /// already-shaped tool result the caller must return as-is.
-    async fn gate_write(
-        &self,
-        tool: &str,
-        request: serde_json::Value,
-    ) -> Result<(), CallToolResult> {
+    ///
+    /// Two tiers, no third: there used to be a `Confirm` tier that asked the
+    /// user through a Tauri event, but that channel is invisible to the MCP
+    /// client — an external agent could only wait out the timeout. Writes are
+    /// now always immediate under `Trust`, and the user can undo them in the
+    /// app afterwards (design doc 25, §5.4).
+    fn gate_write(&self) -> Result<(), CallToolResult> {
         let trust = match self.host.mcp_config() {
             Ok(config) => config.trust,
             Err(message) => return Err(denied(message)),
@@ -161,38 +237,6 @@ impl LedgerTools {
                 "Not authorized: the MCP trust mode is read-only. Ask the user to change it in settings.",
             )),
             TrustMode::Trust => Ok(()),
-            TrustMode::Confirm => {
-                let approval = ApprovalRequest {
-                    request_id: uuid::Uuid::new_v4().to_string(),
-                    tool: tool.to_string(),
-                    request,
-                    created_at: crate::utils::time::now_rfc3339(),
-                };
-                let rx = match self.host.try_stage_approval(approval.clone()) {
-                    StageOutcome::Waiting(rx) => rx,
-                    // Single slot by design: no queue, an actionable error.
-                    StageOutcome::Busy(id) => {
-                        return Err(denied(format!(
-                            "Another write is already waiting for approval ({id}); approve or reject it first."
-                        )));
-                    }
-                };
-                // Tell the webview; a missing window just means nobody is
-                // there to approve, and the timeout will cancel the write.
-                self.host.emit_approval(&approval);
-                match tokio::time::timeout(APPROVAL_TIMEOUT, rx).await {
-                    Ok(Ok(true)) => Ok(()),
-                    Ok(Ok(false)) => {
-                        Err(denied("Rejected: the user declined this write."))
-                    }
-                    Ok(Err(_recv_err)) => Err(denied(
-                        "The approval card was closed; the write was cancelled.",
-                    )),
-                    Err(_elapsed) => {
-                        Err(denied("Timed out: no user approval within the timeout."))
-                    }
-                }
-            }
         }
     }
 }
@@ -309,27 +353,22 @@ impl LedgerTools {
             kind,
             amount_cents: args.amount_cents,
             date: args.date.clone(),
-            description: description.clone(),
+            description,
             source_account: args.source_account.clone().map(AccountRef::Name),
             destination_account: args.destination_account.clone().map(AccountRef::Name),
             category: args.category.clone().map(CategoryRef::Name),
         };
-        // The approval card shows the request as the agent sent it.
-        let request_json = serde_json::json!({
-            "kind": args.kind,
-            "amountCents": args.amount_cents,
-            "date": args.date,
-            "description": description,
-            "sourceAccount": args.source_account,
-            "destinationAccount": args.destination_account,
-            "category": args.category,
-        });
-        if let Err(result) = self.gate_write("record_transaction", request_json).await {
+        if let Err(result) = self.gate_write() {
             return Ok(result);
         }
-        call_ledger(&self.host, move |conn| {
-            ledger::record_transaction(conn, &request)
-        })
+        // Gate first, key second: a read-only caller must not be able to learn
+        // whether some key was already used.
+        call_ledger_keyed(
+            &self.host,
+            "record_transaction",
+            args.idempotency_key.clone(),
+            move |conn| ledger::record_transaction(conn, &request),
+        )
     }
 
     /// Create an account (write, trust-gated).
@@ -340,14 +379,20 @@ impl LedgerTools {
         &self,
         Parameters(args): Parameters<CreateAccountParams>,
     ) -> Result<CallToolResult, McpError> {
-        let request_json = serde_json::json!({
-            "path": args.path,
-            "description": args.description,
-            "openingBalanceCents": args.opening_balance_cents,
-            "openingBalanceDate": args.opening_balance_date,
-        });
-        if let Err(result) = self.gate_write("create_account", request_json).await {
+        if let Err(result) = self.gate_write() {
             return Ok(result);
+        }
+        // Second, independent gate (§4.3): trusting an agent to record spending
+        // is not the same as letting it invent accounts, which cannot be undone
+        // cleanly once postings point at them.
+        match self.host.mcp_config() {
+            Ok(config) if config.allow_create_account => {}
+            Ok(_) => {
+                return Ok(denied(
+                    "Not authorized: creating accounts is switched off. Ask the user to enable it in GlimmerX, or let them create the account first.",
+                ))
+            }
+            Err(message) => return Ok(denied(message)),
         }
         let request = ledger::CreateAccountRequest {
             path: args.path.clone(),
@@ -355,28 +400,199 @@ impl LedgerTools {
             opening_balance_cents: args.opening_balance_cents,
             opening_balance_date: args.opening_balance_date.clone(),
         };
-        call_ledger(&self.host, move |conn| {
-            ledger::create_account(conn, &request)
-        })
+        call_ledger_keyed(
+            &self.host,
+            "create_account",
+            args.idempotency_key.clone(),
+            move |conn| ledger::create_account(conn, &request),
+        )
     }
 }
 
-#[rmcp::tool_handler(
-    name = "glimmerx",
-    instructions = "GlimmerX double-entry ledger. Amounts are integer cents; dates are YYYY-MM-DD. List accounts/categories before writing; account names must match exactly or uniquely. Writes are gated by the trust mode: read-only rejects, confirm asks the user (timeout), trust writes directly."
-)]
-impl rmcp::ServerHandler for LedgerTools {}
+/// What the agent is told once, at `server/discover` / `initialize`.
+const INSTRUCTIONS: &str = "GlimmerX double-entry ledger. Amounts are integer cents; \
+dates are YYYY-MM-DD. List accounts/categories before writing; account names must match \
+exactly or uniquely. Writes are gated by the trust mode: read-only rejects, trust writes \
+directly (the user can undo in the app). Read-only resources are available under \
+glimmerx:// (accounts, categories, monthly report).";
+
+const ACCOUNTS_URI: &str = "glimmerx://accounts";
+const CATEGORIES_URI: &str = "glimmerx://categories";
+const REPORT_PREFIX: &str = "glimmerx://report/";
+const REPORT_TEMPLATE: &str = "glimmerx://report/{month}";
+
+const JSON_MIME: &str = "application/json";
+
+/// First and last day of `YYYY-MM`, or `None` when the month is malformed.
+fn month_bounds(month: &str) -> Option<(String, String)> {
+    let (year, month) = month.split_once('-')?;
+    let year: i32 = year.parse().ok()?;
+    let month: u32 = month.parse().ok()?;
+    let first = chrono::NaiveDate::from_ymd_opt(year, month, 1)?;
+    let next = if month == 12 {
+        chrono::NaiveDate::from_ymd_opt(year + 1, 1, 1)?
+    } else {
+        chrono::NaiveDate::from_ymd_opt(year, month + 1, 1)?
+    };
+    Some((first.to_string(), next.pred_opt()?.to_string()))
+}
+
+/// The concrete resources `resources/list` advertises. The report is listed for
+/// the current month only; the rest of the space is addressed through the
+/// template, because months are an open range, not an enumerable list.
+fn static_resources(today: &str) -> Vec<Resource> {
+    let month = &today[..7];
+    vec![
+        {
+            let mut resource = Resource::new(ACCOUNTS_URI, "accounts");
+            resource.description =
+                Some("All accounts with type, path and current balance.".to_string());
+            resource.mime_type = Some(JSON_MIME.to_string());
+            resource
+        },
+        {
+            let mut resource = Resource::new(CATEGORIES_URI, "categories");
+            resource.description = Some("Expense and income categories.".to_string());
+            resource.mime_type = Some(JSON_MIME.to_string());
+            resource
+        },
+        {
+            let mut resource =
+                Resource::new(format!("{REPORT_PREFIX}{month}"), format!("report-{month}"));
+            resource.description = Some("Income, expense and net for that month.".to_string());
+            resource.mime_type = Some(JSON_MIME.to_string());
+            resource
+        },
+    ]
+}
+
+fn report_template() -> ResourceTemplate {
+    let mut template = ResourceTemplate::new(REPORT_TEMPLATE, "monthly-report");
+    template.title = Some("Monthly report".to_string());
+    template.description =
+        Some("Monthly income, expense and net. Substitute {month} with YYYY-MM.".to_string());
+    template.mime_type = Some(JSON_MIME.to_string());
+    template
+}
+
+fn json_contents(uri: &str, value: &serde_json::Value) -> ReadResourceResult {
+    ReadResourceResult::new(vec![ResourceContents::TextResourceContents {
+        uri: uri.to_string(),
+        mime_type: Some(JSON_MIME.to_string()),
+        text: serde_json::to_string_pretty(value).unwrap_or_else(|_| "null".to_string()),
+        meta: None,
+    }])
+}
+
+#[rmcp::tool_handler(name = "glimmerx")]
+impl rmcp::ServerHandler for LedgerTools {
+    /// Hand-written because the macro only declares `tools` (design doc 25,
+    /// §5.6): resources need to be announced here, and the macro skips
+    /// `get_info` whenever the impl block already has one.
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_resources()
+                .build(),
+        )
+        .with_server_info(Implementation::new("glimmerx", env!("CARGO_PKG_VERSION")))
+        .with_instructions(INSTRUCTIONS)
+    }
+
+    /// 2026-07-28 and nothing else (§5.5). Clients that still open with
+    /// `initialize` are rejected rather than silently served.
+    fn supported_protocol_versions(&self) -> std::borrow::Cow<'static, [ProtocolVersion]> {
+        std::borrow::Cow::Borrowed(&[ProtocolVersion::V_2026_07_28])
+    }
+
+    async fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, McpError> {
+        Ok(ListResourcesResult {
+            result_type: Some(ResultType::COMPLETE),
+            meta: None,
+            next_cursor: None,
+            ttl_ms: None,
+            cache_scope: None,
+            resources: static_resources(&crate::utils::time::today_date()),
+        })
+    }
+
+    async fn list_resource_templates(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, McpError> {
+        Ok(ListResourceTemplatesResult {
+            result_type: Some(ResultType::COMPLETE),
+            meta: None,
+            next_cursor: None,
+            ttl_ms: None,
+            cache_scope: None,
+            resource_templates: vec![report_template()],
+        })
+    }
+
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResponse, McpError> {
+        Ok(self.read_uri(&request.uri)?.into())
+    }
+}
+
+impl LedgerTools {
+    /// Read one resource URI. Split out of the trait method so tests can call it
+    /// without fabricating a `RequestContext`.
+    fn read_uri(&self, uri: &str) -> Result<ReadResourceResult, McpError> {
+        let value = if uri == ACCOUNTS_URI {
+            self.resource_json(|conn| to_json_value(ledger::list_accounts(conn)?))?
+        } else if uri == CATEGORIES_URI {
+            self.resource_json(|conn| to_json_value(ledger::list_categories(conn)?))?
+        } else if let Some(month) = uri.strip_prefix(REPORT_PREFIX) {
+            let (from, to) = month_bounds(month).ok_or_else(|| {
+                McpError::resource_not_found(
+                    format!("Unknown month '{month}'; expected YYYY-MM"),
+                    None,
+                )
+            })?;
+            self.resource_json(move |conn| {
+                to_json_value(ledger::period_summary(conn, &from, &to)?)
+            })?
+        } else {
+            return Err(McpError::resource_not_found(
+                format!("Unknown resource '{uri}'"),
+                None,
+            ));
+        };
+        Ok(json_contents(uri, &value))
+    }
+}
+
+impl LedgerTools {
+    /// Run a read through the same seam the tools use, surfacing a locked or
+    /// unavailable ledger as a protocol-level resource error.
+    fn resource_json(
+        &self,
+        f: impl FnOnce(&rusqlite::Connection) -> Result<serde_json::Value, AppError> + Send + 'static,
+    ) -> Result<serde_json::Value, McpError> {
+        self.host
+            .with_db(Box::new(f))
+            .map_err(|message| McpError::internal_error(message, None))
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use std::sync::Mutex;
-
     use tauri::async_runtime::JoinHandle;
 
     use crate::db::Database;
-    use crate::mcp::approval::ApprovalSlot;
     use crate::mcp::settings::McpConfig;
     use crate::mcp::McpRuntimeStatus;
 
@@ -394,14 +610,13 @@ mod tests {
     }
 
     /// Test double for the app handle — only the parts the tools touch.
-    /// Runtime-task plumbing is a no-op; approvals go through a real slot so
-    /// the single-slot semantics are exercised for real.
+    /// Runtime-task plumbing is a no-op: no test drives the serve loop.
     struct FakeHost {
         backing: Backing,
         trust: Result<TrustMode, String>,
         path: Option<String>,
-        slot: ApprovalSlot,
-        emitted: Mutex<u32>,
+        /// Independent of the trust tier (design doc 25, §4.3).
+        allow_create_account: bool,
     }
 
     impl FakeHost {
@@ -414,8 +629,7 @@ mod tests {
                 backing,
                 trust,
                 path,
-                slot: ApprovalSlot::new(),
-                emitted: Mutex::new(0),
+                allow_create_account: false,
             })
         }
 
@@ -435,6 +649,23 @@ mod tests {
                 Ok(trust),
                 Some("/tmp/glimmerx.db".to_string()),
             )
+        }
+
+        /// Same ledger, with account creation allowed by the user.
+        fn ledger_trusting_accounts(trust: TrustMode) -> Arc<Self> {
+            let dir = tempfile::tempdir().unwrap();
+            let db = Database::create(&dir.path().join("t.db"), "pw").unwrap();
+            {
+                let conn = db.get_conn().unwrap();
+                crate::db::accounts::create_account_with_path(&conn, "Assets/Cash", None).unwrap();
+                crate::mcp::settings::save_trust(&conn, trust.as_str()).unwrap();
+            }
+            Arc::new(Self {
+                backing: Backing::Db { db, _dir: dir },
+                trust: Ok(trust),
+                path: Some("/tmp/glimmerx.db".to_string()),
+                allow_create_account: true,
+            })
         }
 
         /// Unlocked but without a schema: every query fails.
@@ -478,15 +709,8 @@ mod tests {
                 port: 17823,
                 token: "test-token".to_string(),
                 trust,
+                allow_create_account: self.allow_create_account,
             })
-        }
-
-        fn try_stage_approval(&self, request: ApprovalRequest) -> StageOutcome {
-            self.slot.try_insert(request)
-        }
-
-        fn emit_approval(&self, _request: &ApprovalRequest) {
-            *self.emitted.lock().unwrap() += 1;
         }
 
         fn set_runtime_task(&self, _task: JoinHandle<()>, _port: u16) {}
@@ -526,6 +750,7 @@ mod tests {
             source_account: Some("Cash".to_string()),
             destination_account: None,
             category: Some("餐饮".to_string()),
+            idempotency_key: None,
         }
     }
 
@@ -605,6 +830,7 @@ mod tests {
                 source_account: None,
                 destination_account: None,
                 category: None,
+                idempotency_key: None,
             }))
             .await
             .unwrap();
@@ -633,6 +859,7 @@ mod tests {
                 description: None,
                 opening_balance_cents: None,
                 opening_balance_date: None,
+                idempotency_key: None,
             }))
             .await
             .unwrap();
@@ -653,7 +880,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_trust_mode_writes_without_asking() {
-        let host = FakeHost::ledger(TrustMode::Trust);
+        let host = FakeHost::ledger_trusting_accounts(TrustMode::Trust);
         let tools = LedgerTools::new(host.clone());
 
         let record = tools
@@ -669,74 +896,35 @@ mod tests {
                 description: Some("wallet".to_string()),
                 opening_balance_cents: Some(10_000),
                 opening_balance_date: Some("2026-11-14".to_string()),
+                idempotency_key: None,
             }))
             .await
             .unwrap();
         assert!(!failed(&create), "{}", text_of(&create));
         assert!(text_of(&create).contains("accountId"));
-
-        assert_eq!(*host.emitted.lock().unwrap(), 0, "trust never asks");
     }
 
     #[tokio::test]
-    async fn test_confirm_mode_reports_the_busy_slot() {
-        let host = FakeHost::ledger(TrustMode::Confirm);
-        // Single slot by design: a second write is an actionable error.
-        let staged = host.slot.try_insert(ApprovalRequest {
-            request_id: "pending-1".to_string(),
-            tool: "record_transaction".to_string(),
-            request: serde_json::json!({}),
-            created_at: "2026-11-14T00:00:00Z".to_string(),
-        });
-        assert!(matches!(staged, StageOutcome::Waiting(_)));
-
-        let result = LedgerTools::new(host)
-            .record_transaction(Parameters(expense_args()))
-            .await
-            .unwrap();
-        let text = text_of(&result);
-        assert!(failed(&result));
-        assert!(text.contains("pending-1"), "blocking id named: {text}");
-    }
-
-    #[tokio::test]
-    async fn test_confirm_mode_writes_after_approval() {
-        let host = FakeHost::ledger(TrustMode::Confirm);
-        let tools = LedgerTools::new(host.clone());
-        let call = tokio::spawn(async move {
-            tools
-                .record_transaction(Parameters(expense_args()))
-                .await
-                .unwrap()
-        });
-
-        let mut request_id = None;
-        for _ in 0..200 {
-            if let Some(pending) = host.slot.current() {
-                request_id = Some(pending.request_id.clone());
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        }
-        let request_id = request_id.expect("approval never staged");
-        assert_eq!(*host.emitted.lock().unwrap(), 1, "webview told once");
-        assert!(host.slot.resolve(&request_id, true));
-
-        let result = call.await.unwrap();
-        assert!(!failed(&result), "{}", text_of(&result));
-        assert!(text_of(&result).contains("transactionId"));
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn test_confirm_mode_times_out_without_an_answer() {
-        // Nobody is there to approve: the write is cancelled, not left hanging.
-        let tools = LedgerTools::new(FakeHost::ledger(TrustMode::Confirm));
+    async fn test_create_account_is_gated_independently_of_trust() {
+        // Trust lets the agent record spending; it does not let it invent
+        // accounts (design doc 25, §4.3).
+        let tools = LedgerTools::new(FakeHost::ledger(TrustMode::Trust));
         let result = tools
-            .record_transaction(Parameters(expense_args()))
+            .create_account(Parameters(CreateAccountParams {
+                path: "Assets/New".to_string(),
+                description: None,
+                opening_balance_cents: None,
+                opening_balance_date: None,
+                idempotency_key: None,
+            }))
             .await
             .unwrap();
         assert!(failed(&result));
-        assert!(text_of(&result).contains("Timed out"));
+        assert!(
+            text_of(&result).contains("switched off"),
+            "{}",
+            text_of(&result)
+        );
     }
 
     #[tokio::test]
@@ -745,5 +933,239 @@ mod tests {
         let result = tools.list_accounts().await.unwrap();
         assert!(failed(&result));
         assert!(text_of(&result).contains("databaseLocked"));
+    }
+
+    // ---------------------------------------------------------------------
+    // Idempotency (design doc 25, §6)
+    // ---------------------------------------------------------------------
+
+    /// How many transactions the fake ledger actually holds.
+    fn transaction_count(host: &FakeHost) -> i64 {
+        let Backing::Db { db, .. } = &host.backing else {
+            panic!("not a ledger-backed host");
+        };
+        let conn = db.get_conn().unwrap();
+        conn.query_row("SELECT COUNT(*) FROM transactions", [], |row| row.get(0))
+            .unwrap()
+    }
+
+    fn keyed(mut args: RecordTransactionParams, key: &str) -> RecordTransactionParams {
+        args.idempotency_key = Some(key.to_string());
+        args
+    }
+
+    #[tokio::test]
+    async fn test_same_key_writes_once_and_replays_the_result() {
+        let host = FakeHost::ledger(TrustMode::Trust);
+        let tools = LedgerTools::new(host.clone());
+
+        let first = tools
+            .record_transaction(Parameters(keyed(expense_args(), "retry-1")))
+            .await
+            .unwrap();
+        assert!(!failed(&first), "{}", text_of(&first));
+
+        let retry = tools
+            .record_transaction(Parameters(keyed(expense_args(), "retry-1")))
+            .await
+            .unwrap();
+        assert!(!failed(&retry), "{}", text_of(&retry));
+
+        assert_eq!(
+            text_of(&first),
+            text_of(&retry),
+            "a retry must replay the first result, not write again"
+        );
+        assert_eq!(transaction_count(&host), 1, "exactly one transaction");
+    }
+
+    #[tokio::test]
+    async fn test_without_a_key_each_call_writes() {
+        let host = FakeHost::ledger(TrustMode::Trust);
+        let tools = LedgerTools::new(host.clone());
+
+        tools
+            .record_transaction(Parameters(expense_args()))
+            .await
+            .unwrap();
+        tools
+            .record_transaction(Parameters(expense_args()))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            transaction_count(&host),
+            2,
+            "no key means no protection, same as before"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_in_flight_key_is_reported_not_written() {
+        let host = FakeHost::ledger(TrustMode::Trust);
+        {
+            let Backing::Db { db, .. } = &host.backing else {
+                panic!("not a ledger-backed host");
+            };
+            let conn = db.get_conn().unwrap();
+            // A concurrent call claimed the key and has not finished.
+            crate::db::idempotency::claim(&conn, "record_transaction", "busy-1").unwrap();
+        }
+
+        let tools = LedgerTools::new(host.clone());
+        let result = tools
+            .record_transaction(Parameters(keyed(expense_args(), "busy-1")))
+            .await
+            .unwrap();
+
+        assert!(failed(&result));
+        assert!(
+            text_of(&result).contains("still being processed"),
+            "{}",
+            text_of(&result)
+        );
+        assert_eq!(
+            transaction_count(&host),
+            0,
+            "nothing was written in parallel"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_failed_write_releases_the_key() {
+        let host = FakeHost::ledger(TrustMode::Trust);
+        let tools = LedgerTools::new(host.clone());
+
+        // Unknown account: the ledger rejects the write, so the claim must be
+        // released instead of pinning the key.
+        let mut broken = keyed(expense_args(), "retry-2");
+        broken.source_account = Some("Nowhere".to_string());
+        let rejected = tools.record_transaction(Parameters(broken)).await.unwrap();
+        assert!(failed(&rejected), "{}", text_of(&rejected));
+
+        let retried = tools
+            .record_transaction(Parameters(keyed(expense_args(), "retry-2")))
+            .await
+            .unwrap();
+        assert!(!failed(&retried), "{}", text_of(&retried));
+        assert_eq!(transaction_count(&host), 1);
+    }
+
+    #[tokio::test]
+    async fn test_same_key_on_two_tools_is_independent() {
+        let host = FakeHost::ledger_trusting_accounts(TrustMode::Trust);
+        let tools = LedgerTools::new(host.clone());
+
+        tools
+            .record_transaction(Parameters(keyed(expense_args(), "shared")))
+            .await
+            .unwrap();
+
+        let created = tools
+            .create_account(Parameters(CreateAccountParams {
+                path: "Assets/Wallet".to_string(),
+                description: None,
+                opening_balance_cents: None,
+                opening_balance_date: None,
+                idempotency_key: Some("shared".to_string()),
+            }))
+            .await
+            .unwrap();
+
+        assert!(
+            !failed(&created),
+            "different tools do not share a key space: {}",
+            text_of(&created)
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // Resources (design doc 25, §5.6)
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn test_month_bounds_covers_the_whole_month() {
+        assert_eq!(
+            month_bounds("2026-11"),
+            Some(("2026-11-01".to_string(), "2026-11-30".to_string()))
+        );
+        assert_eq!(month_bounds("2026-12").unwrap().1, "2026-12-31");
+        assert_eq!(month_bounds("2026-02").unwrap().1, "2026-02-28");
+        assert_eq!(month_bounds("2028-02").unwrap().1, "2028-02-29");
+        assert!(month_bounds("2026-13").is_none());
+        assert!(month_bounds("nope").is_none());
+    }
+
+    #[test]
+    fn test_static_resources_advertise_the_current_month() {
+        let resources = static_resources("2026-11-14");
+        assert_eq!(resources.len(), 3);
+        assert!(resources.iter().any(|r| r.uri == ACCOUNTS_URI));
+        assert!(resources.iter().any(|r| r.uri == CATEGORIES_URI));
+        assert!(
+            resources
+                .iter()
+                .any(|r| r.uri == "glimmerx://report/2026-11"),
+            "the listed report is the current month"
+        );
+        assert!(resources
+            .iter()
+            .all(|r| r.mime_type.as_deref() == Some(JSON_MIME)));
+    }
+
+    #[test]
+    fn test_report_template_is_a_uri_template() {
+        let template = report_template();
+        assert_eq!(template.uri_template, "glimmerx://report/{month}");
+        assert_eq!(template.mime_type.as_deref(), Some(JSON_MIME));
+    }
+
+    fn text_of_resource(result: &ReadResourceResult) -> (&str, String) {
+        match &result.contents[0] {
+            ResourceContents::TextResourceContents {
+                mime_type, text, ..
+            } => (mime_type.as_deref().unwrap_or(""), text.clone()),
+            other => panic!("expected text contents, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_read_uri_serves_accounts_categories_and_report() {
+        let tools = LedgerTools::new(FakeHost::ledger(TrustMode::ReadOnly));
+
+        let accounts = tools.read_uri(ACCOUNTS_URI).unwrap();
+        let (mime, text) = text_of_resource(&accounts);
+        assert_eq!(mime, JSON_MIME);
+        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert!(
+            parsed
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|account| account["name"] == "Cash"),
+            "accounts resource: {text}"
+        );
+
+        let categories = tools.read_uri(CATEGORIES_URI).unwrap();
+        let (_, text) = text_of_resource(&categories);
+        assert!(serde_json::from_str::<serde_json::Value>(&text).is_ok());
+
+        let report = tools.read_uri("glimmerx://report/2026-11").unwrap();
+        let (_, text) = text_of_resource(&report);
+        assert!(text.contains("netCents"), "report resource: {text}");
+    }
+
+    #[test]
+    fn test_read_uri_rejects_unknown_uris_and_bad_months() {
+        let tools = LedgerTools::new(FakeHost::ledger(TrustMode::ReadOnly));
+        assert!(tools.read_uri("glimmerx://nope").is_err());
+        assert!(tools.read_uri("glimmerx://report/2026-13").is_err());
+        assert!(tools.read_uri("glimmerx://report").is_err());
+    }
+
+    #[test]
+    fn test_read_uri_on_locked_ledger_is_an_error() {
+        let tools = LedgerTools::new(FakeHost::locked());
+        assert!(tools.read_uri(ACCOUNTS_URI).is_err());
     }
 }

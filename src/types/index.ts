@@ -516,7 +516,7 @@ export interface UpdateSavingsGoalInput {
 // MCP (design doc 25, §5/§8)
 // ---------------------------------------------------------------------------
 
-export type McpTrustMode = "readonly" | "confirm" | "trust";
+export type McpTrustMode = "readonly" | "trust";
 
 /** Full MCP state for the automation settings section. */
 export interface McpConfig {
@@ -527,13 +527,7 @@ export interface McpConfig {
   actualPort: number | null;
   running: boolean;
   trustMode: McpTrustMode;
+  /** Whether the agent may call `create_account`; independent of the tier. */
+  allowCreateAccount: boolean;
   token: string;
-}
-
-/** A pending MCP write awaiting user approval ("confirm" trust mode). */
-export interface McpApprovalRequest {
-  requestId: string;
-  tool: "record_transaction" | "create_account";
-  request: Record<string, unknown>;
-  createdAt: string;
 }

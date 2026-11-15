@@ -40,9 +40,12 @@ pub fn get_delete_preview(conn: &Connection, tx_id: &str) -> Result<DeletePrevie
     })
 }
 
-/// Delete transaction permanently.
-#[allow(dead_code)]
-pub fn delete_transaction(conn: &mut Connection, tx_id: &str) -> Result<(), AppError> {
+/// Check the delete rules and remove the postings and the row.
+///
+/// Takes `&Connection` so it can run inside a caller-owned transaction: the
+/// AI edit path replaces a transaction by deleting and re-creating it, and both
+/// halves must land or neither must.
+pub(crate) fn delete_rows_checked(conn: &Connection, tx_id: &str) -> Result<(), AppError> {
     let exists: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM transactions WHERE id = ?1)",
         [tx_id],
@@ -59,10 +62,17 @@ pub fn delete_transaction(conn: &mut Connection, tx_id: &str) -> Result<(), AppE
     // and deleting entries behind its back would leave it internally wrong.
     crate::db::reconcile::assert_not_reconciled(conn, tx_id)?;
 
+    conn.execute("DELETE FROM postings WHERE transaction_id = ?1", [tx_id])?;
+    conn.execute("DELETE FROM transactions WHERE id = ?1", [tx_id])?;
+    Ok(())
+}
+
+/// Delete transaction permanently.
+#[allow(dead_code)]
+pub fn delete_transaction(conn: &mut Connection, tx_id: &str) -> Result<(), AppError> {
     // Use atomic transaction so all deletions succeed or fail together
     let tx = conn.transaction()?;
-    tx.execute("DELETE FROM postings WHERE transaction_id = ?1", [tx_id])?;
-    tx.execute("DELETE FROM transactions WHERE id = ?1", [tx_id])?;
+    delete_rows_checked(&tx, tx_id)?;
     tx.commit()?;
 
     Ok(())

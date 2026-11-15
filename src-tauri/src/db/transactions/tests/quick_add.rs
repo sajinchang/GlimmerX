@@ -481,3 +481,96 @@ fn test_ai_quick_add_rolls_back_category_and_account() {
     // account created inside the transaction must be gone too.
     assert_eq!(count_rows(&conn, "SELECT count(*) FROM accounts"), 1);
 }
+/// Replacing re-derives postings and leaves exactly one transaction behind.
+#[test]
+fn test_replace_by_quick_add_swaps_amount() {
+    let (_dir, mut conn) = test_conn();
+    let cash = make_account(&conn, "Cash", "asset");
+    let food = make_account(&conn, "Food", "expense");
+
+    let original = QuickAddInput {
+        mode: "expense".to_string(),
+        amount: "18.00".to_string(),
+        category_id: None,
+        category_name: None,
+        source_account_id: Some(cash.clone()),
+        destination_account_id: Some(food.clone()),
+        description: Some("Lunch".to_string()),
+        date: None,
+    };
+    let first = quick_add_transaction(&conn, &original).unwrap();
+
+    let corrected = QuickAddInput {
+        amount: "20.00".to_string(),
+        ..original.clone()
+    };
+    let replaced = replace_by_quick_add(&mut conn, &first.transaction.id, &corrected).unwrap();
+
+    assert_eq!(count_rows(&conn, "SELECT count(*) FROM transactions"), 1);
+    assert_eq!(replaced.postings.len(), 2);
+    assert_eq!(replaced.postings.iter().map(|p| p.amount).sum::<i64>(), 0);
+    // 20.00 split across the two postings, not the original 18.00.
+    assert_eq!(
+        replaced
+            .postings
+            .iter()
+            .map(|p| p.amount.abs())
+            .sum::<i64>(),
+        4000
+    );
+    assert_ne!(
+        replaced.transaction.id, first.transaction.id,
+        "replacement is a new row"
+    );
+    assert_eq!(
+        count_rows(
+            &conn,
+            "SELECT count(*) FROM postings WHERE transaction_id = 'x'"
+        ),
+        0
+    );
+}
+
+/// A refused delete (reconciled) must leave the original untouched.
+#[test]
+fn test_replace_by_quick_add_keeps_original_when_refused() {
+    let (_dir, mut conn) = test_conn();
+    let cash = make_account(&conn, "Cash", "asset");
+    let food = make_account(&conn, "Food", "expense");
+
+    let input = QuickAddInput {
+        mode: "expense".to_string(),
+        amount: "18.00".to_string(),
+        category_id: None,
+        category_name: None,
+        source_account_id: Some(cash.clone()),
+        destination_account_id: Some(food.clone()),
+        description: Some("Lunch".to_string()),
+        date: None,
+    };
+    let first = quick_add_transaction(&conn, &input).unwrap();
+
+    // Mark both postings as cleared: the transaction now belongs to a
+    // reconciliation and must not be replaced behind its back.
+    conn.execute(
+        "UPDATE postings SET cleared = 1 WHERE transaction_id = ?1",
+        [&first.transaction.id],
+    )
+    .unwrap();
+
+    let corrected = QuickAddInput {
+        amount: "20.00".to_string(),
+        ..input.clone()
+    };
+    assert!(replace_by_quick_add(&mut conn, &first.transaction.id, &corrected).is_err());
+
+    assert_eq!(count_rows(&conn, "SELECT count(*) FROM transactions"), 1);
+    let still_there: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM transactions WHERE id = ?1",
+            [&first.transaction.id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(still_there, 1, "the original survived a failed replace");
+}

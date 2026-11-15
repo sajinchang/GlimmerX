@@ -376,6 +376,28 @@ pub async fn quick_add_transaction(
     Ok(to_dto(tx_with_postings))
 }
 
+/// Replace a transaction from semantic input (the AI receipt's "有问题" path).
+///
+/// Delete + re-create in one transaction: the client never builds postings, and
+/// a failed re-create cannot leave the ledger missing the original.
+#[tauri::command]
+pub async fn quick_replace_transaction(
+    id: String,
+    input: crate::db::transactions::QuickAddInput,
+    state: State<'_, AppState>,
+) -> Result<TransactionDto, String> {
+    let db_state = state.database.lock().map_err(|e| e.to_string())?;
+    let db = db_state
+        .as_ref()
+        .ok_or(crate::errors::message("errors.databaseLocked"))?;
+    let mut conn = db.get_conn().map_err(|e| e.to_string())?;
+
+    let tx_with_postings = crate::db::transactions::replace_by_quick_add(&mut conn, &id, &input)
+        .map_err(|e| e.to_string())?;
+
+    Ok(to_dto(tx_with_postings))
+}
+
 // ---------------------------------------------------------------------------
 // Transaction Detail Command
 // ---------------------------------------------------------------------------

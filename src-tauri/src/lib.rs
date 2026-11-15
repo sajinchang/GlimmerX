@@ -69,7 +69,6 @@ pub fn run() {
             recent_dbs: Mutex::new(recent_dbs),
         })
         .manage(mcp::McpRuntime::default())
-        .manage(mcp::approval::ApprovalSlot::new())
         .setup(|app| {
             // The MCP runtime reaches every managed state through this one
             // host; commands never take AppHandle params (mock-hostile).
@@ -117,6 +116,7 @@ pub fn run() {
             commands::transactions::transaction_get,
             commands::transactions::transaction_list_paginated,
             commands::transactions::quick_add_transaction,
+            commands::transactions::quick_replace_transaction,
             commands::transactions::transaction_detail,
             commands::transactions::transaction_update,
             commands::transactions::transaction_delete_preview,
@@ -152,8 +152,6 @@ pub fn run() {
             commands::mcp::mcp_get_config,
             commands::mcp::mcp_set_config,
             commands::mcp::mcp_reset_token,
-            commands::mcp::mcp_approve_request,
-            commands::mcp::mcp_current_approval,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

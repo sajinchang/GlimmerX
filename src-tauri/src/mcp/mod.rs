@@ -14,7 +14,6 @@
 //! every config change; it keeps running while the app runs — a locked
 //! ledger simply makes every tool report "the ledger is locked".
 
-pub mod approval;
 pub mod host;
 pub mod settings;
 pub mod tools;
@@ -163,7 +162,12 @@ async fn serve(host: Arc<dyn McpHost>, token: String, preferred_port: u16) -> Re
 
     let config = StreamableHttpServerConfig::default()
         .with_legacy_session_mode(false)
-        .with_json_response(true);
+        .with_json_response(true)
+        // 2026-07-28 removed sessions and the initialize handshake (SEP-2567):
+        // every request carries its own protocol version. Requiring the header
+        // makes a client that skipped it fail loudly instead of being served
+        // as an old-version peer (design doc 25, §5.5).
+        .with_stateless_protocol_metadata_required(true);
     // The factory closure runs per request; the only shared state is the
     // host, which is the whole point of running in-process.
     let tools_host = host.clone();

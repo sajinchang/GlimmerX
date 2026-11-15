@@ -580,7 +580,7 @@
       "categoryTypeMismatch": "The category type does not match the transaction type"
     },
     "mcp": {
-      "invalidTrustMode": "Invalid trust mode: expected readonly, confirm or trust",
+      "invalidTrustMode": "Invalid trust mode: expected readonly or trust",
       "invalidPort": "Invalid port number"
     }
   },
@@ -613,6 +613,16 @@
     "button": "Parse & Save",
     "recognizing": "Parsing...",
     "success": "Saved",
+    "receipt": {
+      "title": "Saved — does this look right?",
+      "saved": "Already in the ledger. Nothing else to do.",
+      "undo": "Undo",
+      "issue": "Something's wrong",
+      "done": "Looks right",
+      "undoSuccess": "Entry removed",
+      "undoFailed": "Could not undo — delete it from the transaction list",
+      "editTitle": "Fix this entry"
+    },
     "settings": {
       "title": "AI Bookkeeping",
       "provider": "Provider",
@@ -915,9 +925,10 @@
     "applyPort": "Apply",
     "trustMode": "Trust mode",
     "trustReadonly": "Read-only",
-    "trustConfirm": "Confirm writes (default)",
     "trustTrust": "Trust (write directly)",
-    "trustHint": "Read-only: writes are rejected. Confirm: a card pops up; no response within 120s cancels. Trust: writes go straight through.",
+    "trustHint": "Read-only: writes are rejected. Trust: writes go straight through and can be undone in the app.",
+    "allowCreateAccount": "Allow the agent to create accounts",
+    "allowCreateAccountHint": "Off by default: an account cannot be undone cleanly once entries point at it.",
     "token": "Access token",
     "resetToken": "Reset token",
     "clientConfig": "Client configuration",
@@ -926,22 +937,6 @@
       "expense": "Expense",
       "income": "Income",
       "transfer": "Transfer"
-    },
-    "approval": {
-      "title": "An external app wants to write the ledger",
-      "transactionDesc": "An MCP client asks to record a transaction. Confirming writes it immediately — there is no undo.",
-      "createAccountDesc": "An MCP client asks to create an account. Confirming creates it immediately.",
-      "amount": "Amount",
-      "kind": "Kind",
-      "date": "Date",
-      "source": "From account",
-      "destination": "To account",
-      "category": "Category",
-      "path": "Account path",
-      "openingBalance": "Opening balance",
-      "description": "Description",
-      "approve": "Approve write",
-      "reject": "Reject"
     }
   }
 }

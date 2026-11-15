@@ -18,7 +18,6 @@ import { Loader2, Copy, RefreshCw, Check } from "lucide-react";
 
 const TRUST_MODES: { value: McpTrustMode; labelKey: string }[] = [
   { value: "readonly", labelKey: "mcp.trustReadonly" },
-  { value: "confirm", labelKey: "mcp.trustConfirm" },
   { value: "trust", labelKey: "mcp.trustTrust" },
 ];
 
@@ -35,7 +34,8 @@ export function McpSettingsSection() {
   const [port, setPort] = useState("17823");
   const [actualPort, setActualPort] = useState<number | null>(null);
   const [running, setRunning] = useState(false);
-  const [trust, setTrust] = useState<McpTrustMode>("confirm");
+  const [trust, setTrust] = useState<McpTrustMode>("readonly");
+  const [allowCreateAccount, setAllowCreateAccount] = useState(false);
   const [token, setToken] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">(
@@ -57,6 +57,7 @@ export function McpSettingsSection() {
         setActualPort(config.actualPort);
         setRunning(config.running);
         setTrust(config.trustMode);
+        setAllowCreateAccount(config.allowCreateAccount);
         setToken(config.token);
       } catch (err) {
         if (alive) setError(translateErrorMessage(err, t));
@@ -72,6 +73,7 @@ export function McpSettingsSection() {
     enabled?: boolean;
     port?: number;
     trust?: McpTrustMode;
+    allowCreateAccount?: boolean;
   }) => {
     setSaveStatus("saving");
     setError(null);
@@ -82,6 +84,7 @@ export function McpSettingsSection() {
       setActualPort(config.actualPort);
       setRunning(config.running);
       setTrust(config.trustMode);
+      setAllowCreateAccount(config.allowCreateAccount);
       setSaveStatus("saved");
       setTimeout(() => setSaveStatus("idle"), 2000);
     } catch (err) {
@@ -198,6 +201,25 @@ export function McpSettingsSection() {
             </SelectContent>
           </Select>
           <p className="text-xs text-muted-foreground">{t("mcp.trustHint")}</p>
+        </div>
+
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1">
+            <Label htmlFor="mcp-allow-create-account">
+              {t("mcp.allowCreateAccount")}
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              {t("mcp.allowCreateAccountHint")}
+            </p>
+          </div>
+          <Switch
+            id="mcp-allow-create-account"
+            checked={allowCreateAccount}
+            onCheckedChange={(checked) => {
+              setAllowCreateAccount(checked);
+              handleSave({ allowCreateAccount: checked });
+            }}
+          />
         </div>
 
         <div className="space-y-2">
