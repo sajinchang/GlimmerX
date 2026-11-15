@@ -1,7 +1,12 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import type { AiProposal, QuickAddInput, QuickAddInitial } from "@/types";
+import type {
+  AiProposal,
+  QuickAddInput,
+  QuickAddInitial,
+  TransactionDto,
+} from "@/types";
 import {
   accountList,
   categoryList,
@@ -52,7 +57,8 @@ type TransactionMode = "expense" | "income" | "transfer";
 interface QuickAddDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onSuccess?: () => void;
+  /** Receives the row that was just written, so the caller can offer an undo. */
+  onSuccess?: (transaction: TransactionDto) => void;
   /**
    * "create" (default): blank form on open.
    * "review": prefilled from an AI proposal and used as the edit form behind
@@ -62,6 +68,12 @@ interface QuickAddDialogProps {
    */
   variant?: "create" | "review";
   initial?: QuickAddInitial;
+  /**
+   * Values the blank create form starts from — used when the AI cannot read a
+   * sentence and the user takes over manually, so the text they typed is not
+   * thrown away.
+   */
+  prefill?: Partial<Pick<QuickAddInitial, "description" | "amount" | "date">>;
   /** Replace this transaction on submit instead of creating a new one. */
   replaceId?: string;
 }
@@ -72,6 +84,7 @@ export function QuickAddDialog({
   onSuccess,
   variant = "create",
   initial,
+  prefill,
   replaceId,
 }: QuickAddDialogProps) {
   const { t } = useTranslation();
@@ -91,7 +104,8 @@ export function QuickAddDialog({
   const proposalSummary = variant === "review" ? initial : undefined;
   /** True while the open-transition is a review prefill, so the mode-change
    * effect below does not wipe the prefilled category / opposite account. */
-  const prefilling = useRef(false);
+  // Seeds the form once per open; see the prefill effect below.
+  const seeded = useRef(false);
   /** Set by handleModeSelect so the clearing effect only reacts to
    * user-initiated mode switches, never to prefill or reset. */
   const modeChangedByUser = useRef(false);
@@ -140,15 +154,19 @@ export function QuickAddDialog({
   useEffect(() => {
     if (!open) {
       setSubmitError(null);
-      prefilling.current = false;
+      seeded.current = false;
       modeChangedByUser.current = false;
       return;
     }
 
+    // Seed once per open; user edits stay while the dialog is open. The guard
+    // is what lets `initial` / `prefill` live in the dependency list: both are
+    // object props whose identity changes on every parent render, and without
+    // it each of those renders would wipe whatever the user has typed.
+    if (seeded.current) return;
+    seeded.current = true;
+
     if (variant === "review" && initial) {
-      // Prefill once per open; user edits stay while the dialog is open.
-      if (prefilling.current) return;
-      prefilling.current = true;
       setMode(initial.mode);
       setAmount(initial.amount ?? "");
       setSourceAccountId(initial.sourceAccountId ?? "");
@@ -168,26 +186,25 @@ export function QuickAddDialog({
     }
 
     setMode("expense");
-    setAmount("");
+    setAmount(prefill?.amount ?? "");
     setSourceAccountId("");
     setDestinationAccountId("");
     setCategoryId(NO_CATEGORY_VALUE);
     setNewCategoryName(null);
-    setDescription("");
-    setDate(todayLocalDate());
+    setDescription(prefill?.description ?? "");
+    setDate(prefill?.date || todayLocalDate());
     setSubmitError(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [open, variant, initial, prefill]);
 
   const mutation = useMutation({
     mutationFn: (input: QuickAddInput) =>
       replaceId
         ? quickReplaceTransaction(replaceId, input)
         : quickAddTransaction(input),
-    onSuccess: () => {
+    onSuccess: (transaction) => {
       invalidateLedger(queryClient);
       onOpenChange(false);
-      onSuccess?.();
+      onSuccess?.(transaction);
     },
     onError: (err) => {
       setSubmitError(translateErrorMessage(err, t));
@@ -333,7 +350,9 @@ export function QuickAddDialog({
       >
         <DialogHeader>
           <DialogTitle>
-            {variant === "review" ? t("ai.review.title") : t("quickAdd.title")}
+            {variant === "review"
+              ? t("ai.review.editTitle")
+              : t("quickAdd.title")}
           </DialogTitle>
         </DialogHeader>
 
@@ -639,6 +658,14 @@ export function QuickAddDialog({
             {submitError && (
               <p className="text-sm text-destructive">{submitError}</p>
             )}
+
+            {/* Replacing deletes the original row; saying so is the only
+                warning the user gets (design doc 25, §4.2). */}
+            {replaceId && (
+              <p className="text-xs text-muted-foreground">
+                {t("ai.review.replaceHint")}
+              </p>
+            )}
           </div>
 
           <DialogFooter>
@@ -650,7 +677,11 @@ export function QuickAddDialog({
               {t("common.cancel")}
             </Button>
             <Button type="submit" disabled={!canSubmit}>
-              {mutation.isPending ? t("common.processing") : t("common.save")}
+              {mutation.isPending
+                ? t("common.processing")
+                : replaceId
+                  ? t("ai.review.saveAndReplace")
+                  : t("common.save")}
             </Button>
           </DialogFooter>
         </form>

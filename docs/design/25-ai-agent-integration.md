@@ -217,6 +217,25 @@ pub struct LedgerOutcome {
 所以 `variant: "create" | "review"` 里 review 那句「预填 + 新建」的语义要改（或直接退役，
 改由 `AiInputDialog` 自己的回执/编辑两态承担）。
 
+#### 4.2.1 交互重做（2026-11-15）
+
+第一版实现把「输入」和「回执」做成互斥的两个 stage，实测有三个坑：回执盖住输入框，
+说错一句只能关窗重来；撤销成功后弹窗直接关闭，输入被 `useEffect` 清空；关闭回执后
+撤销入口随之消失，只能去交易列表里找。重做后的结构：
+
+| 决定 | 理由 |
+| --- | --- |
+| 输入框常驻，结果槽在其下方 | 「撤销 → 改一句 → 再记」是最高频路径，不该跨两次弹窗 |
+| `saving` 与 `saved` 用同一张卡，只改状态行 | 解析返回后先渲染字段再等写入，既做到「落库前就看见」又不阻塞；同高度不抖动 |
+| 金额是卡片的视觉主角（`font-mono`，右对齐） | 回执是给人看的，不是日志；原先把金额、账户、分类、日期排成等权 mono 行 |
+| 撤销两个出口：卡内 + 关窗后 8 秒 toast | 「可逆」必须比「别关窗」更强；toast 的动作按钮让关闭不等于承诺 |
+| ⌘Z = 撤销，⌘/Ctrl+Enter = 提交，Enter 仍换行 | 桌面键盘优先；输入是自由文本，Enter 不能被提交抢走 |
+| 失败分两类：解析失败 / 写入失败 | 对账本状态的含义完全相反，不能共用一句红字 |
+| 解析失败给「手动记一笔」，把原句带进表单 | 否则用户重敲一遍；`QuickAddDialog` 为此加了 `prefill` |
+| 「有问题」改叫「改一下」；覆盖是破坏性的 | `replace_by_quick_add` 删旧建新，原记录不可恢复——按钮文案改成「保存并覆盖」，卡片里写明，覆盖后仍给一次 toast 撤销（撤销只能删掉新记录，这一点如实告知） |
+| 三条写入路径共用一个撤销 toast | AI 直写、手动表单、覆盖修改；否则"可撤销"会随入口不同而不同 |
+| 关闭后写入返回，仍要给撤销 | 用户可能在写入途中关窗。写入照样落库，所以撤销只能走 toast；同时**开窗也要重置状态**，否则下一次打开会看到上一个会话的回执，而 `⌘Z` 会删掉一笔看不见的账 |
+
 > **编辑接口的形态**：现有的 `transaction_update` 收的是 `{date, description, postings}`——
 > 由前端直接拼分录就意味着前端在算金额，违反 AGENTS.md 的硬规则。所以「改参数」应当接受
 > 与 `QuickAddInput` 同形的**语义字段**（mode / amount / 账户 / 分类名 / 日期 / 描述），
@@ -599,8 +618,8 @@ P1 是所有后续工作的地基；P2 与 P3 可并行（两者共用 P1 的能
 | # | 任务 | 落点 |
 | --- | --- | --- |
 | P2-5 | `QuickAddDialog` 的 `variant: "review"` 语义退役或改造：编辑已落库交易走「按语义改一笔」（§4.2 注），不再是「预填 + 新建」 | `components/transactions/QuickAddDialog.tsx` |
-| P2-6 | 抽 `components/transactions/ProposalReview.tsx`：展示金额/账户/分类/日期 + warnings，回执卡与编辑态共用 | 新建 |
-| P2-7 | `AiInputDialog` 三态：`input` → 解析成功**立即提交** → `receipt`（撤销 / 有问题）；`有问题` → `edit`（按语义改一笔，见 §4.2 注）。`create_account` 例外，仍走预确认 | `components/transactions/AiInputDialog.tsx` |
+| P2-6 | `ProposalReview.tsx`（账户确认卡继续用）+ `AiReceiptCard.tsx`（回执卡：金额主角 + 状态行 + 撤销/改一下，§4.2.1） | 新建 |
+| P2-7 | `AiInputDialog` 五态：`idle` → `parsing` → `saving` → `saved`（撤销 / 改一下），失败分 `parse`/`write` 两类；输入框全程常驻，⌘Z / ⌘↵（§4.2.1）。`create_account` 例外，仍走预确认 | `components/transactions/AiInputDialog.tsx` |
 | P2-8 | i18n 文案（zh/en）+ `errors` 段新键 | `src/i18n/locales/*.json` |
 
 **验收**：说「中午吃饭18元」→ 账**立即**出现在列表 → 回执卡显示金额/账户/分类 →

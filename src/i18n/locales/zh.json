@@ -608,20 +608,38 @@
     "createAccountAction": "新建账户"
   },
   "ai": {
-    "title": "AI 记账",
-    "inputPlaceholder": "试试输入：中午吃饭18元",
-    "button": "识别并录入",
-    "recognizing": "识别中...",
+    "title": "一句话记账",
+    "inputPlaceholder": "例如：午饭 18",
+    "button": "记账",
+    "recognizing": "正在理解…",
+    "submitHint": "⌘/Ctrl + ↵ 提交",
     "success": "已录入",
+    "date": {
+      "today": "今天"
+    },
+    "examples": {
+      "expense": "午饭 18",
+      "date": "昨天打车 32 支付宝",
+      "income": "发工资 8000 到招行"
+    },
     "receipt": {
-      "title": "已录入，看看对不对？",
-      "saved": "已经记入账本，不需要再做别的。",
+      "saving": "正在写入…",
+      "saved": "已记入账本",
       "undo": "撤销",
-      "issue": "有问题",
-      "done": "没问题",
+      "undoHint": "⌘Z",
+      "edit": "改一下",
+      "done": "好了",
       "undoSuccess": "已撤销",
       "undoFailed": "撤销失败，可在交易列表里删除",
-      "editTitle": "修改这一笔"
+      "toastSaved": "已记入 {{amount}} {{description}}",
+      "replaced": "已覆盖原记录"
+    },
+    "error": {
+      "parseTitle": "没看懂这句话",
+      "writeTitle": "没有写入任何记录",
+      "rephrase": "换个说法",
+      "retry": "重试",
+      "manual": "手动记一笔"
     },
     "settings": {
       "title": "AI 记账",
@@ -641,12 +659,16 @@
       "providerCustom": "自定义"
     },
     "review": {
-      "title": "确认记账",
+      "title": "新建账户",
+      "editTitle": "修改这一笔",
       "proposed": "AI 提案",
       "openingBalance": "期初余额",
       "accountPath": "账户路径",
       "accountKind": "账户类型",
-      "back": "重新输入"
+      "back": "重新输入",
+      "createAccount": "创建账户",
+      "saveAndReplace": "保存并覆盖",
+      "replaceHint": "保存会删除原记录，且无法恢复"
     }
   },
   "placeholder": {

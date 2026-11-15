@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -9,6 +9,7 @@ import {
   transactionDelete,
 } from "@/utils/api";
 import { translateErrorMessage } from "@/utils/errorTranslation";
+import { formatAmountString } from "@/utils/format";
 import { invalidateLedger } from "@/lib/invalidateLedger";
 import type {
   AiProposal,
@@ -36,6 +37,11 @@ import {
 } from "@/components/ui/select";
 import { QuickAddDialog } from "@/components/transactions/QuickAddDialog";
 import { ProposalReview } from "@/components/transactions/ProposalReview";
+import {
+  AiCardSkeleton,
+  AiErrorCard,
+  AiReceiptCard,
+} from "@/components/transactions/AiReceiptCard";
 import { Sparkles, Loader2 } from "lucide-react";
 
 interface AiInputDialogProps {
@@ -49,8 +55,21 @@ interface AiInputDialogProps {
  * is already in the ledger (design doc 25, §4.2). It exists so the user can see
  * what was written, undo it, or correct it — "optimistic write + undo" replaces
  * the old blocking confirmation card.
+ *
+ * The phases below all share one promise: **the input never disappears**. A
+ * wrong parse used to force the user out of the dialog and start over; now the
+ * sentence stays put, so "undo and say it differently" is two clicks.
  */
-type Stage = "input" | "receipt" | "edit" | "confirmAccount";
+type Phase = "idle" | "parsing" | "saving" | "saved" | "accountConfirm";
+
+type Failure = { kind: "parse" | "write"; message: string };
+
+/** Example sentences, shown only while the box is empty. */
+const EXAMPLE_KEYS = [
+  "ai.examples.expense",
+  "ai.examples.date",
+  "ai.examples.income",
+];
 
 /** Map an AI proposal onto the QuickAddDialog prefill / edit form. */
 function toQuickAddInitial(proposal: AiProposal): QuickAddInitial {
@@ -88,9 +107,17 @@ export function AiInputDialog({
 }: AiInputDialogProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // Mutation callbacks can settle after the dialog is gone; they need to know
+  // which dialog they are talking to without re-reading a stale `open`.
+  const openRef = useRef(open);
+  useEffect(() => {
+    openRef.current = open;
+  }, [open]);
+
   const [text, setText] = useState("");
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const [stage, setStage] = useState<Stage>("input");
+  const [phase, setPhase] = useState<Phase>("idle");
+  const [failure, setFailure] = useState<Failure | null>(null);
   const [proposal, setProposal] = useState<AiProposal | null>(null);
   // What actually landed in the ledger; the receipt describes this, not the
   // proposal, because the two can differ (trimmed name, resolved category).
@@ -101,70 +128,141 @@ export function AiInputDialog({
     "asset",
   );
   const [openingBalance, setOpeningBalance] = useState("");
+  // The two side doors: the full edit form, and the manual form used when the
+  // AI cannot read the sentence at all.
+  const [editing, setEditing] = useState(false);
+  const [manualOpen, setManualOpen] = useState(false);
 
+  // Reset on *every* open/close, not just close. A mutation can settle after
+  // the dialog was dismissed (the write still lands, which is the point of the
+  // optimistic flow); if that state survived, the next session would open with
+  // a receipt nobody asked for — and Ctrl+Z would then delete an entry the user
+  // cannot see.
   useEffect(() => {
-    if (!open) {
-      setText("");
-      setSubmitError(null);
-      setStage("input");
-      setProposal(null);
-      setCommitted(null);
-      setAccountPath("");
-      setAccountKind("asset");
-      setOpeningBalance("");
-    }
+    setText("");
+    setPhase("idle");
+    setFailure(null);
+    setProposal(null);
+    setCommitted(null);
+    setAccountPath("");
+    setAccountKind("asset");
+    setOpeningBalance("");
+    setEditing(false);
+    setManualOpen(false);
   }, [open]);
 
+  const focusInput = useCallback(() => {
+    // A tick of delay: the dialog's own focus trap settles first.
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  }, []);
+
+  const removeEntry = useCallback(
+    async (id: string) => {
+      await transactionDelete(id);
+      invalidateLedger(queryClient);
+    },
+    [queryClient],
+  );
+
+  /** "已记入 ¥18.50 午饭" for the entry a proposal describes. */
+  const savedMessage = (source: AiProposal | null) =>
+    t("ai.receipt.toastSaved", {
+      amount: formatAmountString(source?.amount),
+      description: source?.description ?? "",
+    }).trim();
+
   /**
-   * Writing straight away is the point: no state to persist, no countdown, no
-   * recovery after a crash. A failure leaves nothing behind.
+   * Undo must outlive the dialog: someone who closes the receipt and notices the
+   * mistake a second later gets the same escape hatch in the toast.
+   *
+   * All three write paths use this — the AI entry, the manual form, and a
+   * replacement — so "every write can be taken back" is one function, not three
+   * copies that can drift. The message is the caller's, because only it knows
+   * what was written.
    */
+  const offerUndoInToast = (transaction: TransactionDto, message: string) => {
+    toast.success(message, {
+      duration: 8000,
+      action: {
+        label: t("ai.receipt.undo"),
+        onClick: () => {
+          removeEntry(transaction.id)
+            .then(() => toast.success(t("ai.receipt.undoSuccess")))
+            .catch((err) =>
+              toast.error(
+                `${t("ai.receipt.undoFailed")}: ${translateErrorMessage(err, t)}`,
+              ),
+            );
+        },
+      },
+    });
+  };
+
   const commitMutation = useMutation({
     mutationFn: (result: AiProposal) =>
       quickAddTransaction(toQuickAddInput(result)),
     onSuccess: (transaction, result) => {
-      setProposal(result);
-      setCommitted(transaction);
-      setStage("receipt");
       invalidateLedger(queryClient);
+      if (!openRef.current) {
+        // Dismissed mid-write. The entry is in the ledger all the same, so the
+        // undo offer goes to the toast instead of a receipt nobody will see.
+        offerUndoInToast(transaction, savedMessage(result));
+        onSuccess?.();
+        return;
+      }
+      setCommitted(transaction);
+      setPhase("saved");
       onSuccess?.();
     },
     onError: (err) => {
-      // Nothing was written, so we can simply fall back to the input stage.
-      setSubmitError(translateErrorMessage(err, t));
-      setStage("input");
+      // Nothing was written. Keep the proposal so "retry" does not need the AI
+      // round trip again.
+      setFailure({ kind: "write", message: translateErrorMessage(err, t) });
+      setPhase("idle");
     },
   });
 
   const parseMutation = useMutation({
     mutationFn: (input: string) => aiParseTransaction(input),
+    onMutate: () => {
+      setFailure(null);
+      setPhase("parsing");
+    },
     onSuccess: (result) => {
-      setSubmitError(null);
+      setProposal(result);
       if (result.action === "create_account") {
         // The one exception: an account cannot be un-created cheaply, so it
         // still asks before writing (§4.2 risk table).
-        setProposal(result);
         setAccountPath(result.accountPath ?? "");
         setAccountKind(
           result.accountKind === "liability" ? "liability" : "asset",
         );
         setOpeningBalance(result.openingBalance ?? "");
-        setStage("confirmAccount");
+        setPhase("accountConfirm");
         return;
       }
+      // The card renders from `proposal` before the write resolves, so the user
+      // sees what is about to land instead of a flash of nothing.
+      setPhase("saving");
       commitMutation.mutate(result);
     },
     onError: (err) => {
-      setSubmitError(translateErrorMessage(err, t));
+      setFailure({ kind: "parse", message: translateErrorMessage(err, t) });
+      setPhase("idle");
     },
   });
 
   const undoMutation = useMutation({
-    mutationFn: (id: string) => transactionDelete(id),
+    mutationFn: (id: string) => removeEntry(id),
     onSuccess: () => {
-      invalidateLedger(queryClient);
+      // Back to writing with the sentence intact: "say it differently" is the
+      // usual next step after an undo, not "start over".
+      setCommitted(null);
+      setProposal(null);
+      setFailure(null);
+      setPhase("idle");
       toast.success(t("ai.receipt.undoSuccess"));
-      onOpenChange(false);
+      focusInput();
     },
     onError: (err) => {
       toast.error(
@@ -183,17 +281,56 @@ export function AiInputDialog({
       onSuccess?.();
     },
     onError: (err) => {
-      setSubmitError(translateErrorMessage(err, t));
+      setFailure({ kind: "write", message: translateErrorMessage(err, t) });
     },
   });
 
   const busy = parseMutation.isPending || commitMutation.isPending;
   const canSubmit = text.trim().length > 0 && !busy;
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!canSubmit) return;
-    parseMutation.mutate(text.trim());
+  /**
+   * Recording a second sentence retires the receipt that is on screen, so its
+   * undo moves to the toast. Without this the previous entry would lose its
+   * only escape hatch the moment the user types the next one.
+   */
+  const submit = () => {
+    const value = text.trim();
+    if (!value || busy) return;
+    if (phase === "saved" && committed)
+      offerUndoInToast(committed, savedMessage(proposal));
+    parseMutation.mutate(value);
+  };
+
+  const handleOpenChange = (next: boolean) => {
+    if (!next && phase === "saved" && committed) {
+      offerUndoInToast(committed, savedMessage(proposal));
+    }
+    onOpenChange(next);
+  };
+
+  // ⌘Z / Ctrl+Z on the receipt is the same action as the button. The mutation
+  // object itself is unstable, so the listener depends on its parts: otherwise
+  // it is torn down and re-added on every render.
+  const { mutate: undoEntry, isPending: undoPending } = undoMutation;
+  useEffect(() => {
+    if (!open || phase !== "saved" || !committed || !proposal) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        if (!undoPending) undoEntry(committed.id);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open, phase, committed, proposal, undoEntry, undoPending]);
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Enter keeps inserting newlines (this is free text, sometimes two
+    // sentences); ⌘/Ctrl+Enter is the submit, as the hint says.
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      submit();
+    }
   };
 
   const canConfirmAccount =
@@ -211,111 +348,30 @@ export function AiInputDialog({
   };
 
   const backToInput = () => {
-    setStage("input");
+    setPhase("idle");
     setProposal(null);
     setCommitted(null);
-    setSubmitError(null);
+    setFailure(null);
+    focusInput();
   };
 
   return (
     <>
       <Dialog
-        open={
-          open &&
-          (stage === "input" ||
-            stage === "receipt" ||
-            stage === "confirmAccount")
-        }
-        onOpenChange={onOpenChange}
+        open={open && !editing && !manualOpen}
+        onOpenChange={handleOpenChange}
       >
         <DialogContent className="sm:max-w-md" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Sparkles className="h-5 w-5" />
-              {stage === "input" && t("ai.title")}
-              {stage === "receipt" && t("ai.receipt.title")}
-              {stage === "confirmAccount" && t("ai.review.title")}
+              {phase === "accountConfirm"
+                ? t("ai.review.title")
+                : t("ai.title")}
             </DialogTitle>
           </DialogHeader>
 
-          {stage === "input" && (
-            <form onSubmit={handleSubmit}>
-              <div className="space-y-4">
-                <Textarea
-                  value={text}
-                  onChange={(e) => setText(e.target.value)}
-                  placeholder={t("ai.inputPlaceholder")}
-                  className="min-h-[80px] resize-none"
-                  autoFocus
-                  disabled={busy}
-                />
-
-                {submitError && (
-                  <p className="text-sm text-destructive">{submitError}</p>
-                )}
-              </div>
-
-              <DialogFooter>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => onOpenChange(false)}
-                  disabled={busy}
-                >
-                  {t("common.cancel")}
-                </Button>
-                <Button type="submit" disabled={!canSubmit}>
-                  {busy ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      {t("ai.recognizing")}
-                    </>
-                  ) : (
-                    t("ai.button")
-                  )}
-                </Button>
-              </DialogFooter>
-            </form>
-          )}
-
-          {stage === "receipt" && proposal && committed && (
-            <div className="space-y-4">
-              <p className="text-sm text-muted-foreground">
-                {t("ai.receipt.saved")}
-              </p>
-
-              <ProposalReview proposal={proposal} />
-
-              <DialogFooter>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => undoMutation.mutate(committed.id)}
-                  disabled={undoMutation.isPending}
-                >
-                  {t("ai.receipt.undo")}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setStage("edit")}
-                >
-                  {t("ai.receipt.issue")}
-                </Button>
-                <Button
-                  type="button"
-                  onClick={() => {
-                    // Nothing to do — the entry is already saved.
-                    onOpenChange(false);
-                  }}
-                >
-                  {t("ai.receipt.done")}
-                </Button>
-              </DialogFooter>
-            </div>
-          )}
-
-          {stage === "confirmAccount" && proposal && (
+          {phase === "accountConfirm" && proposal ? (
             <form onSubmit={confirmCreateAccount}>
               <div className="space-y-4">
                 <ProposalReview proposal={proposal} />
@@ -373,8 +429,8 @@ export function AiInputDialog({
                   />
                 </div>
 
-                {submitError && (
-                  <p className="text-sm text-destructive">{submitError}</p>
+                {failure && (
+                  <p className="text-sm text-destructive">{failure.message}</p>
                 )}
               </div>
 
@@ -390,27 +446,155 @@ export function AiInputDialog({
                 <Button type="submit" disabled={!canConfirmAccount}>
                   {createAccountMutation.isPending
                     ? t("common.processing")
-                    : t("common.save")}
+                    : t("ai.review.createAccount")}
                 </Button>
               </DialogFooter>
             </form>
+          ) : (
+            <>
+              {/* Composer stays mounted in every phase: it is the exit ramp
+                  from a wrong receipt (undo → edit the sentence → again). */}
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  submit();
+                }}
+                className="space-y-3"
+              >
+                <Textarea
+                  ref={textareaRef}
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder={t("ai.inputPlaceholder")}
+                  className="min-h-[72px] resize-none"
+                  autoFocus
+                  disabled={busy}
+                  aria-label={t("ai.title")}
+                />
+
+                {phase === "idle" && !failure && text.trim() === "" && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {EXAMPLE_KEYS.map((key) => (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => {
+                          setText(t(key));
+                          focusInput();
+                        }}
+                        className="rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground hover:border-signal hover:text-foreground"
+                      >
+                        {t(key)}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-[11px] text-muted-foreground">
+                    {t("ai.submitHint")}
+                  </span>
+                  <Button
+                    type="submit"
+                    // While the receipt is up, "record another" must not compete
+                    // with the single primary action ("好了").
+                    variant={
+                      phase === "saved" && proposal ? "outline" : "default"
+                    }
+                    disabled={!canSubmit}
+                  >
+                    {busy ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        {t("ai.recognizing")}
+                      </>
+                    ) : (
+                      t("ai.button")
+                    )}
+                  </Button>
+                </div>
+              </form>
+
+              {phase === "parsing" && <AiCardSkeleton />}
+
+              {phase === "saving" && proposal && (
+                <AiReceiptCard proposal={proposal} state="saving" />
+              )}
+
+              {phase === "saved" && proposal && committed && (
+                <AiReceiptCard
+                  proposal={proposal}
+                  state="saved"
+                  undoPending={undoPending}
+                  onUndo={() => undoEntry(committed.id)}
+                  onEdit={() => setEditing(true)}
+                />
+              )}
+
+              {failure && phase === "idle" && (
+                <AiErrorCard
+                  kind={failure.kind}
+                  message={failure.message}
+                  onRephrase={() => {
+                    setFailure(null);
+                    focusInput();
+                  }}
+                  onRetry={() => {
+                    if (!proposal) return;
+                    setFailure(null);
+                    setPhase("saving");
+                    commitMutation.mutate(proposal);
+                  }}
+                  onManual={() => setManualOpen(true)}
+                />
+              )}
+
+              {phase === "saved" && proposal && committed && (
+                <DialogFooter>
+                  <Button type="button" onClick={() => handleOpenChange(false)}>
+                    {t("ai.receipt.done")}
+                  </Button>
+                </DialogFooter>
+              )}
+            </>
           )}
         </DialogContent>
       </Dialog>
 
-      {stage === "edit" && proposal && committed && (
+      {editing && proposal && committed && (
         <QuickAddDialog
-          open={open}
+          open={editing}
           variant="review"
           initial={toQuickAddInitial(proposal)}
           replaceId={committed.id}
           onOpenChange={(nextOpen) => {
-            if (!nextOpen) setStage("receipt");
+            if (!nextOpen) setEditing(false);
           }}
-          onSuccess={() => {
-            // The entry was replaced in place; there is nothing left to review.
-            toast.success(t("ai.success"));
+          onSuccess={(replacement) => {
+            // Replacing is destructive: the original row is gone. The toast is
+            // the only way back, so it offers undo even though that undo can
+            // only delete the replacement.
+            setEditing(false);
+            offerUndoInToast(replacement, t("ai.receipt.replaced"));
             onOpenChange(false);
+            onSuccess?.();
+          }}
+        />
+      )}
+
+      {manualOpen && (
+        <QuickAddDialog
+          open={manualOpen}
+          prefill={{ description: text.trim() }}
+          onOpenChange={(nextOpen) => {
+            if (!nextOpen) setManualOpen(false);
+          }}
+          onSuccess={(transaction) => {
+            // Typed by hand, but still a write: same undo, same 8 seconds.
+            setManualOpen(false);
+            onOpenChange(false);
+            offerUndoInToast(transaction, t("ai.receipt.saved"));
             onSuccess?.();
           }}
         />

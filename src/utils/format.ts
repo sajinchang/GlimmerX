@@ -56,3 +56,14 @@ export function formatAmountWithSign(cents: number): string {
   if (cents === 0) return formatted;
   return cents > 0 ? `+${formatted}` : formatted;
 }
+
+/**
+ * Format a decimal amount string (the shape the backend returns) for display.
+ * Falls back to the raw string when it is not a parseable amount, so a bad
+ * value is visible instead of silently becoming zero.
+ */
+export function formatAmountString(amount?: string): string {
+  if (!amount) return "";
+  const cents = parseAmountToCents(amount);
+  return cents === null ? `${MONEY_SYMBOL}${amount}` : formatAmount(cents);
+}

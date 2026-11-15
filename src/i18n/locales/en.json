@@ -608,20 +608,38 @@
     "createAccountAction": "Create account"
   },
   "ai": {
-    "title": "AI Bookkeeping",
-    "inputPlaceholder": "Try: Lunch 18 yuan",
-    "button": "Parse & Save",
-    "recognizing": "Parsing...",
-    "success": "Saved",
+    "title": "One-line entry",
+    "inputPlaceholder": "e.g. lunch 18",
+    "button": "Record",
+    "recognizing": "Reading…",
+    "submitHint": "⌘/Ctrl + ↵ to record",
+    "success": "Recorded",
+    "date": {
+      "today": "Today"
+    },
+    "examples": {
+      "expense": "lunch 18",
+      "date": "taxi 32 yesterday from Alipay",
+      "income": "salary 8000 into Chase"
+    },
     "receipt": {
-      "title": "Saved — does this look right?",
-      "saved": "Already in the ledger. Nothing else to do.",
+      "saving": "Writing…",
+      "saved": "Added to the ledger",
       "undo": "Undo",
-      "issue": "Something's wrong",
-      "done": "Looks right",
-      "undoSuccess": "Entry removed",
+      "undoHint": "⌘Z",
+      "edit": "Fix it",
+      "done": "Done",
+      "undoSuccess": "Undone",
       "undoFailed": "Could not undo — delete it from the transaction list",
-      "editTitle": "Fix this entry"
+      "toastSaved": "Added {{amount}} {{description}}",
+      "replaced": "Original replaced"
+    },
+    "error": {
+      "parseTitle": "Could not read that",
+      "writeTitle": "Nothing was written",
+      "rephrase": "Rephrase",
+      "retry": "Retry",
+      "manual": "Enter it manually"
     },
     "settings": {
       "title": "AI Bookkeeping",
@@ -641,12 +659,16 @@
       "providerCustom": "Custom"
     },
     "review": {
-      "title": "Confirm entry",
+      "title": "New account",
+      "editTitle": "Edit this entry",
       "proposed": "AI proposal",
       "openingBalance": "Opening balance",
       "accountPath": "Account path",
       "accountKind": "Account type",
-      "back": "Revise input"
+      "back": "Start over",
+      "createAccount": "Create account",
+      "saveAndReplace": "Save and replace",
+      "replaceHint": "Saving deletes the original entry and cannot be undone"
     }
   },
   "placeholder": {

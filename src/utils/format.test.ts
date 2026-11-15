@@ -3,6 +3,7 @@ import {
   centsToYuan,
   yuanToCents,
   formatAmount,
+  formatAmountString,
   formatAmountWithSign,
 } from "@/utils/format";
 
@@ -65,5 +66,24 @@ describe("formatAmountWithSign", () => {
 
   it("shows negative sign without extra prefix", () => {
     expect(formatAmountWithSign(-5000)).toBe("-¥50.00");
+  });
+});
+
+describe("formatAmountString", () => {
+  it("formats the decimal strings the backend returns", () => {
+    expect(formatAmountString("18.5")).toBe("¥18.50");
+    expect(formatAmountString("18.50")).toBe("¥18.50");
+    expect(formatAmountString("1850.00")).toBe("¥1,850.00");
+    expect(formatAmountString("0")).toBe("¥0.00");
+  });
+
+  it("shows an unparseable amount instead of pretending it is zero", () => {
+    // A silently wrong "¥0.00" on a receipt is worse than a visibly odd one.
+    expect(formatAmountString("about 20")).toBe("¥about 20");
+  });
+
+  it("renders nothing for a missing amount", () => {
+    expect(formatAmountString(undefined)).toBe("");
+    expect(formatAmountString("")).toBe("");
   });
 });
