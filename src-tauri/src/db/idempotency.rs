@@ -30,6 +30,25 @@ use crate::db::AppError;
 /// write this app performs, short enough that a retry is not blocked forever.
 pub const STALE_SECONDS: i64 = 600;
 
+/// How long a finished claim is kept. Comfortably longer than any plausible
+/// client retry, short enough that the table does not grow forever.
+pub const KEEP_FINISHED_DAYS: i64 = 30;
+
+/// Drop finished claims older than `keep_days`, returning how many went.
+///
+/// Nothing depends on these rows: they exist to answer "did this key already
+/// happen", and a caller that waits a month before retrying has bigger
+/// problems. In-flight rows are never touched — those carry a live write.
+pub fn prune_finished(conn: &Connection, keep_days: i64) -> Result<usize, AppError> {
+    let removed = conn.execute(
+        "DELETE FROM automation_idempotency
+          WHERE status = 'done'
+            AND (julianday('now') - julianday(created_at)) > ?1",
+        params![keep_days as f64],
+    )?;
+    Ok(removed)
+}
+
 /// Outcome of claiming a key.
 #[derive(Debug, PartialEq)]
 pub enum Claim {
@@ -215,6 +234,44 @@ mod tests {
         assert_eq!(
             claim(&conn, "create_account", "k1").unwrap(),
             Claim::Proceed
+        );
+    }
+
+    #[test]
+    fn test_prune_drops_only_old_finished_claims() {
+        let (_dir, conn) = fixture();
+
+        // Old and finished: pruneable.
+        claim(&conn, "record_transaction", "old").unwrap();
+        complete(&conn, "record_transaction", "old", &serde_json::json!(1)).unwrap();
+        // Recent and finished: still protecting a retry.
+        claim(&conn, "record_transaction", "recent").unwrap();
+        complete(&conn, "record_transaction", "recent", &serde_json::json!(2)).unwrap();
+        // In flight: a live write, never pruned.
+        claim(&conn, "record_transaction", "busy").unwrap();
+
+        conn.execute(
+            "UPDATE automation_idempotency SET created_at = datetime('now', '-40 days')
+              WHERE idempotency_key = 'old'",
+            [],
+        )
+        .unwrap();
+
+        assert_eq!(prune_finished(&conn, KEEP_FINISHED_DAYS).unwrap(), 1);
+        assert_eq!(
+            claim(&conn, "record_transaction", "recent").unwrap(),
+            Claim::Done(serde_json::json!(2)),
+            "a recent claim still replays"
+        );
+        assert_eq!(
+            claim(&conn, "record_transaction", "busy").unwrap(),
+            Claim::InFlight,
+            "an in-flight claim is a live write"
+        );
+        assert_eq!(
+            claim(&conn, "record_transaction", "old").unwrap(),
+            Claim::Proceed,
+            "the pruned key is free again"
         );
     }
 

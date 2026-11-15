@@ -1,0 +1,107 @@
+{
+  "$comment": "Shared amount-parsing cases. Both parsers must agree on every row: `src-tauri/src/utils/money.rs` (the authority, amounts are stored as its output) and `src/utils/money.ts` (the form gate, so the user is not told a legal amount is invalid). `cents: null` means the input must be rejected. Adding a case here adds it to both test suites at once.",
+  "cases": [
+    { "input": "0", "cents": 0, "why": "zero" },
+    { "input": "100", "cents": 10000, "why": "whole yuan" },
+    { "input": "12.50", "cents": 1250, "why": "two decimals" },
+    { "input": "-3.99", "cents": -399, "why": "negative" },
+    { "input": "+1.25", "cents": 125, "why": "explicit plus" },
+    {
+      "input": " 12.50 ",
+      "cents": 1250,
+      "why": "surrounding whitespace is trimmed"
+    },
+    { "input": ".50", "cents": 50, "why": "no integer part" },
+    { "input": "1.", "cents": 100, "why": "no fractional part" },
+    { "input": "+.5", "cents": 50, "why": "sign without integer part" },
+    {
+      "input": "1.9999999",
+      "cents": 200,
+      "why": "only the third decimal rounds"
+    },
+    { "input": "0.005", "cents": 1, "why": "rounds half away from zero" },
+    {
+      "input": "0.004999",
+      "cents": 0,
+      "why": "fourth decimal does not round up"
+    },
+    {
+      "input": "2.675",
+      "cents": 268,
+      "why": "the float parser used to give 267 here"
+    },
+    {
+      "input": "12.345",
+      "cents": 1235,
+      "why": "rounds up on the third decimal"
+    },
+    {
+      "input": "-2.675",
+      "cents": -268,
+      "why": "half away from zero, not toward zero"
+    },
+    { "input": "1.005", "cents": 101, "why": "no binary-float drift" },
+    { "input": "-0.00", "cents": 0, "why": "negative zero collapses to zero" },
+    {
+      "input": "-0.001",
+      "cents": 0,
+      "why": "rounds to zero, sign must not survive"
+    },
+    {
+      "input": "99999999.99",
+      "cents": 9999999999,
+      "why": "just under the cap"
+    },
+    { "input": "100000000.00", "cents": 10000000000, "why": "exactly the cap" },
+    {
+      "input": "-100000000.00",
+      "cents": -10000000000,
+      "why": "cap applies to the magnitude"
+    },
+    {
+      "input": "0.0000000000000000000001",
+      "cents": 0,
+      "why": "24 characters is the length limit, inclusive"
+    },
+
+    { "input": "100000000.01", "cents": null, "why": "one cent over the cap" },
+    {
+      "input": "-100000000.01",
+      "cents": null,
+      "why": "one cent over the cap, negative"
+    },
+    { "input": "9999999999999.00", "cents": null, "why": "far over the cap" },
+    {
+      "input": "9223372036854775807",
+      "cents": null,
+      "why": "i64::MAX is not a legal amount"
+    },
+    { "input": "1e3", "cents": null, "why": "scientific notation" },
+    { "input": "1E3", "cents": null, "why": "scientific notation, upper case" },
+    {
+      "input": "1e309",
+      "cents": null,
+      "why": "the value that would saturate an f64 cast"
+    },
+    { "input": "inf", "cents": null, "why": "not a number" },
+    { "input": "NaN", "cents": null, "why": "not a number" },
+    { "input": "1,000", "cents": null, "why": "no thousand separators" },
+    { "input": "1.2.3", "cents": null, "why": "two decimal points" },
+    { "input": "0x10", "cents": null, "why": "hexadecimal" },
+    { "input": ".", "cents": null, "why": "point alone" },
+    { "input": "-", "cents": null, "why": "sign alone" },
+    { "input": "+", "cents": null, "why": "sign alone" },
+    { "input": "--1", "cents": null, "why": "double sign" },
+    { "input": "+-1", "cents": null, "why": "mixed signs" },
+    { "input": "1.2a", "cents": null, "why": "trailing letter" },
+    { "input": "", "cents": null, "why": "empty" },
+    { "input": "   ", "cents": null, "why": "whitespace only" },
+    { "input": "abc", "cents": null, "why": "text" },
+    { "input": "１２３", "cents": null, "why": "non-ASCII digits" },
+    {
+      "input": "0000000000000000000000000",
+      "cents": null,
+      "why": "25 characters exceeds the limit"
+    }
+  ]
+}

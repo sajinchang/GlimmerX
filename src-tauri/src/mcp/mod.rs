@@ -143,6 +143,24 @@ pub struct McpRuntimeStatus {
     pub error: Option<String>,
 }
 
+/// Compare two tokens without early exit.
+///
+/// A loopback bearer token is not a realistic timing target, but the compare is
+/// cheap and the alternative is a `==` that leaks a prefix length to anyone who
+/// can measure it — no reason to leave that in a security boundary.
+fn token_matches(given: &str, expected: &str) -> bool {
+    let given = given.as_bytes();
+    let expected = expected.as_bytes();
+    if given.len() != expected.len() {
+        return false;
+    }
+    given
+        .iter()
+        .zip(expected)
+        .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+        == 0
+}
+
 async fn serve(host: Arc<dyn McpHost>, token: String, preferred_port: u16) -> Result<(), String> {
     use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
     use rmcp::transport::streamable_http_server::{
@@ -207,7 +225,7 @@ async fn serve(host: Arc<dyn McpHost>, token: String, preferred_port: u16) -> Re
                     .headers()
                     .get(axum::http::header::AUTHORIZATION)
                     .and_then(|v| v.to_str().ok())
-                    .is_some_and(|v| v == expected);
+                    .is_some_and(|v| token_matches(v, &expected));
                 if !ok {
                     return axum::http::StatusCode::UNAUTHORIZED.into_response();
                 }

@@ -112,7 +112,13 @@ where
             Claim::Proceed => match f(conn) {
                 Ok(written) => {
                     let value = to_json_value(written)?;
-                    idempotency::complete(conn, tool, &key, &value)?;
+                    // The write is already committed. Reporting an error here
+                    // would send the agent into a retry that can only be
+                    // answered "still processing"; say what actually happened.
+                    // The claim stays in flight and expires on its own.
+                    if let Err(e) = idempotency::complete(conn, tool, &key, &value) {
+                        eprintln!("[glimmerx] idempotency bookkeeping failed: {e:?}");
+                    }
                     Ok(serde_json::json!({ "outcome": "written", "value": value }))
                 }
                 Err(err) => {

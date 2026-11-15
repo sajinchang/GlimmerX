@@ -40,6 +40,19 @@ fn path_label(path: &std::path::Path) -> String {
 // Tauri Commands
 // ---------------------------------------------------------------------------
 
+/// Finished idempotency claims are disposable (design doc 25, §6): they only
+/// answer "did this key already run", and a month of history is far more than
+/// any retry window. Doing it on unlock keeps the table bounded without a
+/// background job or a schema change.
+fn prune_idempotency(db: &crate::db::Database) {
+    if let Ok(conn) = db.get_conn() {
+        let _ = crate::db::idempotency::prune_finished(
+            &conn,
+            crate::db::idempotency::KEEP_FINISHED_DAYS,
+        );
+    }
+}
+
 /// Create a new encrypted database at a user-chosen path and initialize the schema.
 #[tauri::command]
 pub async fn db_create(
@@ -79,6 +92,8 @@ pub async fn db_create(
     recent_dbs
         .add(&path, &path_label(&path_buf))
         .map_err(crate::errors::from_error)?;
+
+    prune_idempotency(&db);
 
     // Store in app state
     {
@@ -126,6 +141,8 @@ pub async fn db_unlock(
     recent_dbs
         .add(&path, &path_label(&path_buf))
         .map_err(crate::errors::from_error)?;
+
+    prune_idempotency(&db);
 
     // Store in app state
     {

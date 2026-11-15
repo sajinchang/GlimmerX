@@ -517,3 +517,12 @@ async fn test_resources_list_and_read() {
     assert!(missing.get("error").is_some(), "unknown uri: {missing}");
     stop(&app);
 }
+
+#[test]
+fn test_token_matches_is_exact() {
+    let expected = "Bearer abc123";
+    assert!(crate::mcp::token_matches("Bearer abc123", expected));
+    assert!(!crate::mcp::token_matches("Bearer abc124", expected));
+    assert!(!crate::mcp::token_matches("Bearer abc12", expected));
+    assert!(!crate::mcp::token_matches("", expected));
+}

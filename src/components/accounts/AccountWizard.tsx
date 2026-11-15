@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
+import { invalidateLedger } from "@/lib/invalidateLedger";
 import {
   ChevronRight,
   Wallet,
@@ -193,7 +194,10 @@ export function AccountWizard({
       });
 
       onSuccess();
-      queryClient.invalidateQueries();
+      // Narrower than `invalidateQueries()`: only what a ledger
+      // change can affect (a blanket call was the old workaround for the
+      // hand-written key list, which had drifted).
+      invalidateLedger(queryClient);
       if (isFinish) {
         onOpenChange(false);
       }

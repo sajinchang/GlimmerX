@@ -83,7 +83,7 @@ lint-backend:
 fmt: fmt-frontend fmt-backend
 
 fmt-frontend:
-	npx prettier --write "src/**/*.{ts,tsx,css,json}"
+	npx prettier --write "src/**/*.{ts,tsx,css,json}" "fixtures/**/*.json"
 
 fmt-backend:
 	cd src-tauri && cargo fmt
@@ -139,7 +139,7 @@ check:
 	@echo "→ ESLint check..."
 	npx eslint . --max-warnings=0
 	@echo "→ Prettier check..."
-	npx prettier --check "src/**/*.{ts,tsx,css,json}"
+	npx prettier --check "src/**/*.{ts,tsx,css,json}" "fixtures/**/*.json"
 	@echo "→ Rust fmt check..."
 	cd src-tauri && cargo fmt -- --check
 	@echo "→ Rust clippy..."

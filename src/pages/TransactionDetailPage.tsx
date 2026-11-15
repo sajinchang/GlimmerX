@@ -17,6 +17,7 @@ import {
   categoryList,
 } from "@/utils/api";
 import { QUERY_CONFIG } from "@/constants/query";
+import { invalidateLedger } from "@/lib/invalidateLedger";
 import { translateErrorMessage } from "@/utils/errorTranslation";
 import { TransactionDeleteDialog } from "@/components/transactions/TransactionDeleteDialog";
 import { TransactionForm } from "@/components/transactions/TransactionForm";
@@ -89,8 +90,7 @@ export function TransactionDetailPage() {
     onSuccess: () => {
       toast.success(t("transactions.updated"));
       queryClient.invalidateQueries({ queryKey: ["transactionDetail", id] });
-      queryClient.invalidateQueries({ queryKey: ["transactionListPaginated"] });
-      queryClient.invalidateQueries({ queryKey: ["accounts"] });
+      invalidateLedger(queryClient);
       setEditDialogOpen(false);
     },
     onError: (err: unknown) => {

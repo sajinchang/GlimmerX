@@ -2,6 +2,7 @@ import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { transactionDeletePreview, transactionDelete } from "@/utils/api";
 import { QUERY_CONFIG } from "@/constants/query";
+import { invalidateLedger } from "@/lib/invalidateLedger";
 import { translateErrorMessage } from "@/utils/errorTranslation";
 import { formatDateShort } from "@/utils/date";
 import { Badge } from "@/components/ui/badge";
@@ -53,8 +54,7 @@ export function TransactionDeleteDialog({
       queryClient.removeQueries({
         queryKey: ["transactionDetail", transactionId],
       });
-      queryClient.invalidateQueries({ queryKey: ["transactionListPaginated"] });
-      queryClient.invalidateQueries({ queryKey: ["accounts"] });
+      invalidateLedger(queryClient);
       onOpenChange(false);
       onSuccess?.();
     },

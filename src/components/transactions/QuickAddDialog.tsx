@@ -9,6 +9,7 @@ import {
   quickReplaceTransaction,
 } from "@/utils/api";
 import { QUERY_CONFIG } from "@/constants/query";
+import { invalidateLedger } from "@/lib/invalidateLedger";
 import { translateErrorMessage } from "@/utils/errorTranslation";
 import { todayLocalDate } from "@/utils/date";
 import { usePreventDialogCloseWhenPopperOpen } from "@/hooks/usePreventDialogCloseWhenPopperOpen";
@@ -184,13 +185,7 @@ export function QuickAddDialog({
         ? quickReplaceTransaction(replaceId, input)
         : quickAddTransaction(input),
     onSuccess: () => {
-      queryClient.invalidateQueries({
-        predicate: (query) =>
-          query.queryKey[0] === "transactionListPaginated" ||
-          query.queryKey[0] === "transactionDetail",
-      });
-      queryClient.invalidateQueries({ queryKey: ["accounts"] });
-      queryClient.invalidateQueries({ queryKey: ["categories"] });
+      invalidateLedger(queryClient);
       onOpenChange(false);
       onSuccess?.();
     },

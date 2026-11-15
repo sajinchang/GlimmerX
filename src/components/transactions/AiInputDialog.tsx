@@ -9,6 +9,7 @@ import {
   transactionDelete,
 } from "@/utils/api";
 import { translateErrorMessage } from "@/utils/errorTranslation";
+import { invalidateLedger } from "@/lib/invalidateLedger";
 import type {
   AiProposal,
   QuickAddInitial,
@@ -114,17 +115,6 @@ export function AiInputDialog({
     }
   }, [open]);
 
-  const invalidateLedger = () => {
-    queryClient.invalidateQueries({
-      predicate: (query) =>
-        query.queryKey[0] === "transactionListPaginated" ||
-        query.queryKey[0] === "transactionDetail" ||
-        query.queryKey[0] === "dashboardSummary",
-    });
-    queryClient.invalidateQueries({ queryKey: ["accounts"] });
-    queryClient.invalidateQueries({ queryKey: ["categories"] });
-  };
-
   /**
    * Writing straight away is the point: no state to persist, no countdown, no
    * recovery after a crash. A failure leaves nothing behind.
@@ -136,7 +126,7 @@ export function AiInputDialog({
       setProposal(result);
       setCommitted(transaction);
       setStage("receipt");
-      invalidateLedger();
+      invalidateLedger(queryClient);
       onSuccess?.();
     },
     onError: (err) => {
@@ -172,7 +162,7 @@ export function AiInputDialog({
   const undoMutation = useMutation({
     mutationFn: (id: string) => transactionDelete(id),
     onSuccess: () => {
-      invalidateLedger();
+      invalidateLedger(queryClient);
       toast.success(t("ai.receipt.undoSuccess"));
       onOpenChange(false);
     },
@@ -187,7 +177,7 @@ export function AiInputDialog({
     mutationFn: (input: Parameters<typeof accountCreate>[0]) =>
       accountCreate(input),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["accounts"] });
+      invalidateLedger(queryClient);
       toast.success(t("ai.success"));
       onOpenChange(false);
       onSuccess?.();

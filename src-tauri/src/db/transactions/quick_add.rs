@@ -43,7 +43,9 @@ pub fn replace_by_quick_add(
     tx_id: &str,
     input: &QuickAddInput,
 ) -> Result<TransactionWithPostings, AppError> {
-    let tx = conn.unchecked_transaction()?;
+    // Checked API on purpose: a caller that already opened a transaction gets
+    // a clear error instead of silently joining it and committing early.
+    let tx = conn.transaction()?;
     super::delete::delete_rows_checked(&tx, tx_id)?;
     let result = insert_by_quick_add(&tx, input)?;
     tx.commit()?;

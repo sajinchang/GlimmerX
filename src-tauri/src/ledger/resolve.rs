@@ -54,8 +54,8 @@ pub fn resolve_account(
                 return Ok((acc.id.clone(), None));
             }
 
-            // Rule 2: contains, either direction, longest name wins when the
-            // hint contains several account names.
+            // Rule 2: contains, either direction. Only an unambiguous hit is
+            // accepted — several matches are an error, not a "closest" guess.
             let mut contains: Vec<&AccountRecord> = accounts
                 .iter()
                 .filter(|a| {

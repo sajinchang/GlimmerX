@@ -14,6 +14,7 @@ import {
   categoryList,
 } from "@/utils/api";
 import { QUERY_CONFIG } from "@/constants/query";
+import { invalidateLedger } from "@/lib/invalidateLedger";
 import { translateErrorMessage } from "@/utils/errorTranslation";
 import type {
   CreateTransactionInput,
@@ -145,7 +146,7 @@ export function TransactionsPage() {
       await transactionCreate(data);
       toast.success(t("transactions.created"));
       setFormOpen(false);
-      queryClient.invalidateQueries({ queryKey: ["transactionListPaginated"] });
+      invalidateLedger(queryClient);
     } catch (err: unknown) {
       toast.error(translateErrorMessage(err, t));
     } finally {

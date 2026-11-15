@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
+import { invalidateLedger } from "@/lib/invalidateLedger";
 import type { AccountDto } from "@/types";
 import { accountUpdate } from "@/utils/api";
 import { translateErrorMessage } from "@/utils/errorTranslation";
@@ -141,7 +142,10 @@ export function AccountForm({
         toast.success(t("accounts.accountUpdated"));
       }
       onSuccess();
-      queryClient.invalidateQueries();
+      // Narrower than `invalidateQueries()`: only what a ledger
+      // change can affect (a blanket call was the old workaround for the
+      // hand-written key list, which had drifted).
+      invalidateLedger(queryClient);
       onOpenChange(false);
     } catch (err: unknown) {
       console.error("[AccountForm] update failed:", err);

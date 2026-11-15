@@ -4,12 +4,19 @@ import {
   hasExcessPrecision,
   MAX_AMOUNT_CENTS,
 } from "./money";
+// The same file the Rust test reads (src-tauri/src/utils/money.rs), so the two
+// parsers cannot silently disagree.
+import moneyFixture from "../../fixtures/money-cases.json";
 
 /**
- * These mirror `src-tauri/src/utils/money.rs`. If a case is added there it
- * belongs here too: the form gates submission with this parser, so any
- * divergence means either a legal transaction that cannot be saved or an
- * illegal one that is rejected after the user pressed save.
+ * The form gates submission with this parser while the backend stores what
+ * `src-tauri/src/utils/money.rs` produces, so any divergence means either a
+ * legal transaction that cannot be saved or an illegal one that is rejected
+ * after the user pressed save.
+ *
+ * The cases below are local flavour; the rows that matter for agreement live in
+ * `fixtures/money-cases.json` and are read by both suites. Add shared cases
+ * there, not here.
  */
 describe("parseAmountToCents", () => {
   it("parses the inputs the form produces", () => {
@@ -72,5 +79,22 @@ describe("hasExcessPrecision", () => {
     expect(hasExcessPrecision("12")).toBe(false);
     expect(hasExcessPrecision("12.505")).toBe(true);
     expect(hasExcessPrecision("1e5")).toBe(true);
+  });
+});
+
+describe("shared money fixture", () => {
+  // Mirrors `test_shared_fixture_agrees_with_frontend` in money.rs.
+  it("agrees with the backend on every row", () => {
+    expect(moneyFixture.cases.length).toBeGreaterThan(0);
+
+    for (const testCase of moneyFixture.cases) {
+      const actual = parseAmountToCents(testCase.input);
+      // `toBe` uses Object.is, which is what we want here: a `-0` leaking out
+      // of the parser is a real (if quiet) disagreement with Rust.
+      expect(
+        actual,
+        `${JSON.stringify(testCase.input)} (${testCase.why})`,
+      ).toBe(testCase.cents);
+    }
   });
 });

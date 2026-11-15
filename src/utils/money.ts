@@ -49,7 +49,11 @@ export function parseAmountToCents(raw: string): number | null {
   if (negative) cents = -cents;
   if (Math.abs(cents) > MAX_AMOUNT_CENTS) return null;
 
-  return cents;
+  // `-0` is a value JavaScript keeps and Rust cannot represent. It slips out of
+  // `"-0.00"` / `"-0.001"`; `===` cannot tell it from zero and it stringifies as
+  // "0", but `Object.is(-0, 0)` is false — which is what React state setters
+  // and this repo's assertions use. Normalise it: integer cents have one zero.
+  return cents === 0 ? 0 : cents;
 }
 
 /** True when the amount carries more precision than the ledger stores. */

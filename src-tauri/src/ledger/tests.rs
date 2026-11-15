@@ -745,3 +745,24 @@ fn test_create_account_rejects_overflowing_opening_balance() {
     // The account must not be left behind by the rejected request.
     assert!(list_accounts(&conn).unwrap().is_empty());
 }
+
+#[test]
+fn test_create_account_rejects_i64_min_opening_balance() {
+    // `i64::MIN.abs()` panics in debug and wraps in release, so a naive
+    // `abs() > MAX` check lets this through in release builds.
+    let (_dir, conn) = test_conn();
+
+    let err = create_account(
+        &conn,
+        &CreateAccountRequest {
+            path: "Assets/Cash".into(),
+            description: None,
+            opening_balance_cents: Some(i64::MIN),
+            opening_balance_date: None,
+        },
+    )
+    .unwrap_err();
+
+    assert!(err.to_string().contains("金额格式无效"));
+    assert!(list_accounts(&conn).unwrap().is_empty());
+}

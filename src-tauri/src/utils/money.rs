@@ -125,6 +125,35 @@ mod tests {
         }
     }
 
+    /// The same rows the frontend test reads, so a change to either parser
+    /// shows up as a failure on the side that drifted — not as a user being
+    /// told a legal amount is invalid (or the reverse).
+    #[test]
+    fn test_shared_fixture_agrees_with_frontend() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/money-cases.json");
+        let raw = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
+        let fixture: serde_json::Value = serde_json::from_str(&raw).expect("valid fixture json");
+        let cases = fixture["cases"].as_array().expect("cases array");
+        assert!(!cases.is_empty(), "the fixture must not be empty");
+
+        for case in cases {
+            let input = case["input"].as_str().expect("input string");
+            let why = case["why"].as_str().unwrap_or("");
+            match (parse_amount_to_cents(input), case["cents"].as_i64()) {
+                (Ok(actual), Some(expected)) => {
+                    assert_eq!(actual, expected, "{input:?} ({why})")
+                }
+                (Err(_), None) => {}
+                (Ok(actual), None) => {
+                    panic!("{input:?} ({why}) parsed as {actual}, fixture says invalid")
+                }
+                (Err(e), Some(expected)) => {
+                    panic!("{input:?} ({why}) rejected with {e:?}, fixture expects {expected}")
+                }
+            }
+        }
+    }
+
     #[test]
     fn test_upper_bound_enforced() {
         let max_yuan = MAX_AMOUNT_CENTS / 100;

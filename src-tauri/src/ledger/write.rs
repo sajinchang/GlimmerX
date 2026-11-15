@@ -23,7 +23,9 @@ use super::types::{
 /// `utils::money::parse_amount_to_cents`.
 fn cents_to_decimal(cents: i64) -> String {
     let sign = if cents < 0 { "-" } else { "" };
-    let abs = cents.abs();
+    // `unsigned_abs` rather than `abs`: `i64::MIN.abs()` panics in debug and
+    // wraps to a negative in release.
+    let abs = cents.unsigned_abs();
     format!("{}{}.{:02}", sign, abs / 100, abs % 100)
 }
 
@@ -170,7 +172,10 @@ pub fn create_account(
     req: &CreateAccountRequest,
 ) -> Result<AccountOutcome, AppError> {
     if let Some(amount) = req.opening_balance_cents {
-        if amount.abs() > MAX_AMOUNT_CENTS {
+        // `unsigned_abs`, not `abs`: the amount is caller-supplied, and
+        // `i64::MIN` would panic in debug and wrap to a negative in release —
+        // slipping past a `>` comparison entirely.
+        if amount.unsigned_abs() > MAX_AMOUNT_CENTS as u64 {
             return Err(AppError::ValidationError(
                 "errors.transaction.invalidAmount".to_string(),
             ));
