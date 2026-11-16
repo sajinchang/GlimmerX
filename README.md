@@ -12,14 +12,14 @@
 
 ### 已实现功能
 
-- **账户管理** — 多账户类型（资产、负债、收入、支出）、账户余额追踪、账户归档
-- **交易管理** — 复式记账交易、快速记账（支出/收入/转账）、交易搜索与过滤
+- **账户管理** — 多账户类型（资产、负债、收入、支出）、账户余额追踪、账户停用/启用
+- **交易管理** — 复式记账交易、快速记账（支出/收入/转账）、交易详情/编辑/删除、搜索过滤与虚拟滚动列表
 - **AI 记账** — 自然语言录入交易（如"中午吃饭18元"），自动识别分类/账户/金额/日期，支持 OpenAI / DeepSeek / Ollama 等兼容服务
-- **分类管理** — 层级分类结构、分类统计
-- **预算管理** — 月度/年度预算、预算执行报告
-- **概览仪表盘** — 月度/年度收支汇总、净资产趋势、分类占比、近期交易
-- **报表分析** — 9 种报表（标准财务报表、分类分析、资产负债表、收支趋势、月度对比、年度汇总、账户交易、账户余额趋势、审计报告）
-- **数据管理** — 数据库备份、CSV 导出/导入（含去重）、Beancount 导出
+- **分类管理** — 损益分类 CRUD（与镜像账户联动）、删除影响预览、分类统计
+- **预算管理** — 月度/周度预算、进度与超支提示、结余滚存、预算执行报告
+- **概览仪表盘** — 净资产概览与 90 天活动热力、待关注事项、月度收支趋势、分类占比、预算概览、近期交易、账户余额、最大支出
+- **报表分析** — 6 种报表（现金流、分类构成、净资产归因、资产负债表、账户明细、预算执行）
+- **数据管理** — 数据库备份
 - **国际化** — 中文、英文双语支持
 
 ## 技术栈
@@ -62,8 +62,8 @@ GlimmerX/
 │   │   ├── services/     # 业务服务层（AI 解析等）
 │   │   └── utils/        # 工具模块
 │   └── capabilities/     # Tauri 权限配置
-├── design/               # 设计文档（详细设计）
-├── docs/                 # 文档资源（截图等）
+├── design/               # UI 设计稿
+├── docs/                 # 设计文档（索引见 docs/DESIGN.md）
 ├── public/               # 静态资源
 └── hooks/                # Git hooks
 ```
@@ -93,13 +93,14 @@ make dev-web
 
 **Windows**: 运行 `setup-windows.ps1` 自动安装依赖
 **Ubuntu**: 运行 `setup-ubuntu.sh` 自动安装依赖
+**macOS**: 运行 `setup-macos.sh` 自动安装依赖
 
 ## 开发命令
 
 ```bash
 make help          # 查看所有命令
 make dev           # 开发模式
-make check         # 完整检查（tsc + eslint + prettier + cargo fmt + clippy）
+make check         # 完整检查（错误表 + 文档校验 + tsc + eslint + prettier + cargo fmt + clippy）
 make lint          # 代码检查
 make fmt           # 格式化代码
 make test          # 运行测试
@@ -113,9 +114,7 @@ make release-windows   # Windows: NSIS + MSI + MSIX
 make release-linux     # Linux: AppImage + deb + rpm
 make release-mac       # macOS: dmg + app
 
-make portable          # 便携版（当前平台）
 make portable-windows  # Windows 单文件 exe
-make portable-linux    # Linux AppImage
 ```
 
 输出目录: `release/`
@@ -156,7 +155,7 @@ Rust 后端构造英文 prompt（注入当前日期/分类清单/账户清单）
 
 ## 设计文档
 
-详细设计文档位于 `design/` 目录，索引见 [DESIGN.md](docs/DESIGN.md)。
+详细设计文档位于 `docs/design/` 目录，索引见 [DESIGN.md](docs/DESIGN.md)。
 
 ## 推荐 IDE
 
