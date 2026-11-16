@@ -64,9 +64,20 @@
 | 列 | 说明 |
 | --- | --- |
 | `category_id` | 外键，`UNIQUE`：每个分类至多一个预算 |
-| `amount` | 整数分，必须为正 |
+| `amount` | 整数分，必须为正；**仅当前限额**，历史见 `budget_amount_history` |
 | `period` | `monthly` / `weekly` |
-| `rollover` | 开启后上期结余滚入本期（后端算，最多回溯 260 期，每期先 `max(0)`） |
+| `rollover` | 开启后上期结余滚入本期（后端算，最多回溯 260 期，每期先 `max(0)`，历史期按当时生效限额重放） |
+
+### budget_amount_history
+
+| 列 | 说明 |
+| --- | --- |
+| `budget_id` | 外键 `ON DELETE CASCADE`；随预算删除而清理 |
+| `amount` | 整数分，该次变更后的限额 |
+| `effective_from` | 变更生效时刻（RFC3339）；重放按**周期结束日**之前最新的行取值，期内变更作用于当期 |
+
+v4 起每次限额变更追加一行；`create_budget` 写入首行。迁移回填为"自创建日起
+即当前限额"——对存量预算重放结果与 v3 完全一致，精度从下一次变更开始。
 
 ### reconciliations / savings_goals
 

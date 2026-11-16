@@ -253,12 +253,62 @@ fn next_period(
     }
 }
 
+/// The limit history of a budget: one `(effective date, amount)` pair per
+/// limit change, oldest first. Rows whose `effective_from` cannot be parsed as
+/// a date are skipped — the replay must never fail on a malformed row it did
+/// not write.
+fn load_amount_history(
+    conn: &Connection,
+    budget_id: &str,
+) -> Result<Vec<(chrono::NaiveDate, i64)>, AppError> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT substr(effective_from, 1, 10), amount
+               FROM budget_amount_history
+              WHERE budget_id = ?1
+              ORDER BY effective_from",
+        )
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    let rows = stmt
+        .query_map([budget_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    let mut history = Vec::new();
+    for row in rows {
+        let (date_str, amount) = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+        if let Ok(date) = chrono::NaiveDate::parse_from_str(&date_str, "%Y-%m-%d") {
+            history.push((date, amount));
+        }
+    }
+    Ok(history)
+}
+
+/// The limit that was in effect during a period ending on `period_end`.
+///
+/// The latest row effective at the period's **end** wins: an edit made
+/// mid-period applies to the period it was made in, and the creation row (which
+/// is stamped inside the first period) always qualifies — no period is ever
+/// left without an answer.
+fn effective_limit(
+    history: &[(chrono::NaiveDate, i64)],
+    period_end: chrono::NaiveDate,
+) -> Option<i64> {
+    history
+        .iter()
+        .rev()
+        .find(|(from, _)| *from <= period_end)
+        .map(|(_, amount)| *amount)
+}
+
 /// Unused amount carried into the current period.
 ///
-/// Walks forward from the period the budget was created in, clamping each period
-/// at zero: overspending is not debt that eats the next budget. Works for both
-/// periods — a weekly budget carries last week's leftover, a monthly one last
-/// month's.
+/// Walks forward from the period the budget was created in, replaying each
+/// period at the limit that was in effect **then** (v4 keeps that history), and
+/// clamping each period at zero: overspending is not debt that eats the next
+/// budget. Works for both periods — a weekly budget carries last week's
+/// leftover, a monthly one last month's.
 ///
 /// Bounded at [`MAX_ROLLOVER_PERIODS`] periods (roughly five years either way),
 /// because an unbounded walk over a decade-old budget costs a query per period
@@ -279,17 +329,19 @@ fn rollover_carry(
         None => return Ok(0),
     };
 
+    let history = load_amount_history(conn, &budget.id)?;
     let mut carry: i64 = 0;
     let mut periods = 0;
     while cursor < *current_start && periods < MAX_ROLLOVER_PERIODS {
         let end = period_end_of(cursor, &budget.period);
+        let amount = effective_limit(&history, end).unwrap_or(budget.amount);
         let spent = spent_in_window(
             conn,
             &budget.category_id,
             &cursor.to_string(),
             &end.to_string(),
         )?;
-        carry = (carry + budget.amount - spent).max(0);
+        carry = (carry + amount - spent).max(0);
         cursor = next_period(cursor, &budget.period)?;
         periods += 1;
     }
@@ -512,6 +564,14 @@ pub fn create_budget(
         rusqlite::params![&id, category_id, amount, period_str, rollover_int, &now],
     )?;
 
+    // The creation limit is the first fact in the history the rollover replay
+    // reads; writing it here keeps `update_budget` a pure append-log.
+    conn.execute(
+        "INSERT INTO budget_amount_history (id, budget_id, amount, effective_from, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?4)",
+        rusqlite::params![Uuid::new_v4().to_string(), &id, amount, &now],
+    )?;
+
     Ok(id)
 }
 
@@ -528,9 +588,13 @@ pub struct UpdateBudgetParams<'a> {
 }
 
 /// Update budget fields.
+///
+/// An amount change is appended to the limit history (nothing is written for a
+/// no-op amount), so the rollover replay can price every period at the limit
+/// that actually governed it.
 pub fn update_budget(conn: &Connection, params: &UpdateBudgetParams<'_>) -> Result<(), AppError> {
     // Verify budget exists
-    let _budget = find_budget(conn, params.id)?
+    let budget = find_budget(conn, params.id)?
         .ok_or_else(|| AppError::ValidationError("errors.budgetNotFound".to_string()))?;
 
     // Validate amount if provided
@@ -542,11 +606,14 @@ pub fn update_budget(conn: &Connection, params: &UpdateBudgetParams<'_>) -> Resu
         }
     }
 
+    // A limit that did not change is not a fact worth recording.
+    let new_amount = params.amount.filter(|&val| val != budget.amount);
+
     let now = crate::utils::time::now_rfc3339();
     let mut sets: Vec<String> = Vec::new();
     let mut sql_params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
-    if let Some(val) = params.amount {
+    if let Some(val) = new_amount {
         sets.push("amount = ?".to_string());
         sql_params.push(Box::new(val));
     }
@@ -571,7 +638,7 @@ pub fn update_budget(conn: &Connection, params: &UpdateBudgetParams<'_>) -> Resu
     }
 
     sets.push("updated_at = ?".to_string());
-    sql_params.push(Box::new(now));
+    sql_params.push(Box::new(now.clone()));
     sql_params.push(Box::new(params.id.to_string()));
 
     let sql = format!("UPDATE budgets SET {} WHERE id = ?", sets.join(", "));
@@ -579,6 +646,14 @@ pub fn update_budget(conn: &Connection, params: &UpdateBudgetParams<'_>) -> Resu
     let param_refs: Vec<&dyn rusqlite::types::ToSql> =
         sql_params.iter().map(|p| p.as_ref()).collect();
     stmt.execute(rusqlite::params_from_iter(param_refs))?;
+
+    if let Some(val) = new_amount {
+        conn.execute(
+            "INSERT INTO budget_amount_history (id, budget_id, amount, effective_from, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?4)",
+            rusqlite::params![Uuid::new_v4().to_string(), params.id, val, &now],
+        )?;
+    }
 
     Ok(())
 }
@@ -593,6 +668,12 @@ pub fn delete_budget(conn: &Connection, id: &str) -> Result<(), AppError> {
     let _budget = find_budget(conn, id)?
         .ok_or_else(|| AppError::ValidationError("errors.budgetNotFound".to_string()))?;
 
+    // The FK would cascade, but `foreign_keys` is a per-connection pragma:
+    // delete explicitly so the history cannot outlive its budget anywhere.
+    conn.execute(
+        "DELETE FROM budget_amount_history WHERE budget_id = ?1",
+        [id],
+    )?;
     conn.execute("DELETE FROM budgets WHERE id = ?1", [id])?;
 
     Ok(())
@@ -1231,6 +1312,137 @@ mod tests {
         let statuses = list_budget_statuses(&conn, 2026, 11).unwrap();
         assert_eq!(statuses[0].rollover_amount, 0);
         assert_eq!(statuses[0].available, 50000);
+    }
+
+    /// The whole point of the limit history: a raise must not reach back into
+    /// the past. October ran at 500.00; raising to 600.00 for November must
+    /// replay October at 500.00, not at the new number. Before v4 this carry
+    /// came out 300.00 (600 − 300 spent) instead of 200.00 (500 − 300).
+    #[test]
+    fn test_rollover_uses_the_limit_in_effect_at_the_time() {
+        let (_dir, conn) = test_conn();
+        let cat_id = make_category(&conn, "餐饮", &CategoryType::Expense);
+        let food_acct = make_account(&conn, "餐饮", "expense");
+        let cash = make_account(&conn, "Cash", "asset");
+
+        let budget_id = create_budget(&conn, &cat_id, 50000, &BudgetPeriod::Monthly, true).unwrap();
+        // Pretend the budget has lived in October at 500.00.
+        conn.execute(
+            "UPDATE budgets SET created_at = '2026-10-05T00:00:00+08:00' WHERE id = ?1",
+            [&budget_id],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE budget_amount_history SET effective_from = '2026-10-05T00:00:00+08:00'
+              WHERE budget_id = ?1",
+            [&budget_id],
+        )
+        .unwrap();
+
+        make_categorized_transaction(
+            &conn,
+            "2026-10-15",
+            "十月午餐",
+            &[(food_acct.clone(), 30000), (cash.clone(), -30000)],
+        );
+
+        // The raise that used to rewrite history.
+        update_budget(
+            &conn,
+            &UpdateBudgetParams {
+                id: &budget_id,
+                amount: Some(60000),
+                period: None,
+                rollover: None,
+            },
+        )
+        .unwrap();
+
+        let statuses = list_budget_statuses(&conn, 2026, 11).unwrap();
+        assert_eq!(statuses[0].rollover_amount, 20000);
+        assert_eq!(statuses[0].available, 80000, "600 current + 200 carried");
+        assert_eq!(statuses[0].amount, 60000, "the live limit is the new one");
+    }
+
+    /// The history is an append log: a change appends, a no-op amount does not.
+    #[test]
+    fn test_budget_update_records_limit_history() {
+        let (_dir, conn) = test_conn();
+        let cat_id = make_category(&conn, "餐饮", &CategoryType::Expense);
+        let budget_id =
+            create_budget(&conn, &cat_id, 50000, &BudgetPeriod::Monthly, false).unwrap();
+
+        update_budget(
+            &conn,
+            &UpdateBudgetParams {
+                id: &budget_id,
+                amount: Some(60000),
+                period: None,
+                rollover: None,
+            },
+        )
+        .unwrap();
+
+        let amounts: Vec<i64> = conn
+            .prepare(
+                "SELECT amount FROM budget_amount_history
+                  WHERE budget_id = ?1 ORDER BY effective_from",
+            )
+            .unwrap()
+            .query_map([&budget_id], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(amounts, vec![50000, 60000], "oldest first");
+
+        // Saving the same amount again is not a limit change.
+        update_budget(
+            &conn,
+            &UpdateBudgetParams {
+                id: &budget_id,
+                amount: Some(60000),
+                period: None,
+                rollover: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM budget_amount_history WHERE budget_id = ?1",
+                [&budget_id],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+            2
+        );
+    }
+
+    /// A deleted budget leaves no orphan history behind.
+    #[test]
+    fn test_delete_budget_removes_history() {
+        let (_dir, conn) = test_conn();
+        let cat_id = make_category(&conn, "餐饮", &CategoryType::Expense);
+        let budget_id =
+            create_budget(&conn, &cat_id, 50000, &BudgetPeriod::Monthly, false).unwrap();
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM budget_amount_history WHERE budget_id = ?1",
+                [&budget_id],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
+
+        delete_budget(&conn, &budget_id).unwrap();
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM budget_amount_history", [], |row| row
+                .get::<_, i64>(
+                0
+            ))
+            .unwrap(),
+            0
+        );
     }
 
     #[test]

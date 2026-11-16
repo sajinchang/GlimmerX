@@ -15,18 +15,20 @@ use crate::db::AppError;
 use uuid::Uuid;
 
 /// Current schema version stamped into `PRAGMA user_version`.
-pub(crate) const SCHEMA_VERSION: i64 = 3;
+pub(crate) const SCHEMA_VERSION: i64 = 4;
 
 /// Schema v1 shipped with 0.1.2. Existing databases have `user_version = 0`;
 /// applying this idempotent baseline stamps them as v1 without touching data.
 ///
-/// `Migrations` cannot be `const` any more because v2 carries a Rust hook, so it
-/// is built once on first use. `MIGRATIONS.validate()` runs in the test suite.
+/// `Migrations` cannot be `const` any more because v2 and v4 carry Rust hooks,
+/// so it is built once on first use. `MIGRATIONS.validate()` runs in the test
+/// suite.
 static MIGRATIONS: LazyLock<Migrations> = LazyLock::new(|| {
     Migrations::new(vec![
         M::up(include_str!("schema_v1.sql")),
         M::up_with_hook(include_str!("schema_v2.sql"), up_v2_hook),
         M::up(include_str!("schema_v3.sql")),
+        M::up_with_hook(include_str!("schema_v4.sql"), up_v4_hook),
     ])
 });
 
@@ -65,6 +67,8 @@ pub fn init_baseline(conn: &Connection) -> Result<(), AppError> {
     tx.execute_batch(include_str!("schema_v2.sql"))?;
     backfill_category_accounts(&tx)?;
     tx.execute_batch(include_str!("schema_v3.sql"))?;
+    tx.execute_batch(include_str!("schema_v4.sql"))?;
+    backfill_budget_amount_history(&tx)?;
     tx.execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION};"))?;
     tx.commit()
         .map_err(|e| AppError::DatabaseError(format!("数据库初始化失败：{e}")))
@@ -199,6 +203,40 @@ fn insert_category_account(
          VALUES (?1, ?2, ?3, 'CNY', '', 0, 1, 0, ?4, ?4)",
         params![id, name, account_type, now],
     )?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// v4 data migration
+// ---------------------------------------------------------------------------
+
+fn up_v4_hook(tx: &rusqlite::Transaction<'_>) -> HookResult {
+    backfill_budget_amount_history(tx)?;
+    Ok(())
+}
+
+/// Seed the limit history of every existing budget with one row: "the current
+/// limit since the budget was created".
+///
+/// The old schema kept no history, so this is the only recoverable fact — and
+/// honestly, only an approximation: a limit edited in the past stays rewritten
+/// as if it had always been the current one. The computed carry does not change
+/// for any existing budget; the guarantee begins with the next edit.
+fn backfill_budget_amount_history(conn: &Connection) -> rusqlite::Result<()> {
+    let pending: Vec<(String, i64, String)> = {
+        let mut stmt =
+            conn.prepare("SELECT id, amount, created_at FROM budgets ORDER BY created_at")?;
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
+
+    for (budget_id, amount, created_at) in pending {
+        conn.execute(
+            "INSERT INTO budget_amount_history (id, budget_id, amount, effective_from, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?4)",
+            params![Uuid::new_v4().to_string(), budget_id, amount, created_at],
+        )?;
+    }
     Ok(())
 }
 
@@ -445,7 +483,7 @@ mod tests {
     }
 
     #[test]
-    fn test_migrate_v1_to_v3() {
+    fn test_migrate_v1_to_latest() {
         let (_dir, path, mut conn) = v1_db();
 
         // A bound pair (category 餐饮 with an account of the same name), an
@@ -490,7 +528,7 @@ mod tests {
 
         migrate(&mut conn, &path, false).unwrap();
 
-        assert_eq!(count(&conn, "PRAGMA user_version"), 3);
+        assert_eq!(count(&conn, "PRAGMA user_version"), SCHEMA_VERSION);
 
         // Every category is bound, and no account is claimed twice.
         assert_eq!(
@@ -662,8 +700,8 @@ mod tests {
 
         assert_eq!(
             count(&conn, "PRAGMA user_version"),
-            3,
-            "v2 databases only replay v3"
+            SCHEMA_VERSION,
+            "v2 databases replay v3 and v4"
         );
         // Only the row with a cached category is archived; NULL stays absent
         // instead of becoming a meaningless row.
@@ -697,6 +735,71 @@ mod tests {
         assert_eq!(
             count(&conn, "SELECT COUNT(*) FROM postings WHERE cleared = 1"),
             0
+        );
+    }
+
+    /// A v3 database: the chain a database opened on the v3 build takes. Only
+    /// v4 replays from here.
+    fn v3_db() -> (TempDir, PathBuf, Connection) {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("v3.db");
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "PRAGMA journal_mode = WAL;
+             PRAGMA foreign_keys = ON;",
+        )
+        .unwrap();
+        conn.execute_batch(include_str!("schema_v1.sql")).unwrap();
+        conn.execute_batch(include_str!("schema_v2.sql")).unwrap();
+        backfill_category_accounts(&conn).unwrap();
+        conn.execute_batch(include_str!("schema_v3.sql")).unwrap();
+        conn.execute_batch("PRAGMA user_version = 3;").unwrap();
+        (dir, path, conn)
+    }
+
+    /// v4 seeds each existing budget with one history row: "the current limit
+    /// since creation". That is the only fact the pre-v4 schema preserved, and
+    /// seeding it keeps the replay a numerical no-op for existing data.
+    #[test]
+    fn test_v4_seeds_budget_limit_history() {
+        let (_dir, path, mut conn) = v3_db();
+
+        insert_account(&conn, "acc-food", "餐饮", "expense");
+        conn.execute(
+            "INSERT INTO categories (id, name, type, account_id, created_at, updated_at)
+             VALUES ('cat-food', '餐饮', 'expense', 'acc-food',
+                     '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO budgets (id, category_id, amount, period, rollover, created_at, updated_at)
+             VALUES ('budget-1', 'cat-food', 150000, 'monthly', 1,
+                     '2026-10-05T00:00:00+08:00', '2026-11-01T00:00:00+08:00')",
+            [],
+        )
+        .unwrap();
+
+        migrate(&mut conn, &path, false).unwrap();
+
+        assert_eq!(count(&conn, "PRAGMA user_version"), SCHEMA_VERSION);
+        assert_eq!(
+            count(&conn, "SELECT COUNT(*) FROM budget_amount_history"),
+            1,
+            "exactly one seed row per budget"
+        );
+        let (amount, effective_from): (i64, String) = conn
+            .query_row(
+                "SELECT amount, effective_from FROM budget_amount_history
+                  WHERE budget_id = 'budget-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(amount, 150000);
+        assert_eq!(
+            effective_from, "2026-10-05T00:00:00+08:00",
+            "the seed takes the budget's creation moment, not the migration time"
         );
     }
 

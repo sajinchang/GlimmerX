@@ -154,6 +154,6 @@ CSV / Beancount 导入导出及其命令、`csv` 依赖、`transaction_hashes` �
 | 对账内部统一用**对账单符号** | 信用卡账单印正数、负债账户记负数，两套符号会让差额恒差一个负号 | `db/reconcile.rs::statement_sign` |
 | 期初余额靠"这笔交易带一条 equity 分录"识别，不靠描述字符串 | 用户改描述后期初会退化成普通交易，删账户清理随之失效 | `OPENING_BALANCE_PREDICATE` |
 | 净资产账户谓词单点：`type IN ('asset','liability') AND is_active = 1 AND include_net_worth = 1` | 散在四处时漏一处净资产就对不上 | `reports::net_worth_accounts` |
-| 预算窗口：周预算看含今天那一周、非当前月取该月最后一周；月预算看整月；结转每期先 `max(0)` 且上限 260 期；"已花"只取 `amount > 0` | 预测性窗口与退款毛额口径必须唯一 | `db/budgets.rs` |
+| 预算窗口：周预算看含今天那一周、非当前月取该月最后一周；月预算看整月；结转每期先 `max(0)` 且上限 260 期，历史期按 `budget_amount_history` 当时生效限额重放（期内变更作用于当期）；"已花"只取 `amount > 0` | 预测性窗口、退款毛额与限额历史口径必须唯一，提额不得改写历史 | `db/budgets.rs` |
 | 金额：整数分存储、上限 `10_000_000_000`、前端解析唯一入口 `utils/money.ts` 且与 Rust 逐条对齐 | `parseFloat * 100` 会让 `2.675`、`0.005` 与后端不一致 | `utils/money.ts` |
 | 不存 `transaction_type`、不存交易级分类；前端不缓存金额 | 借贷方向由分录符号决定，缓存会产生第二份真相 | `db/transactions/*` |
