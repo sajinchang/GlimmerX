@@ -47,12 +47,14 @@ export function CategoryBreakdownChart() {
       ...chartAnimation(),
       textStyle: chartTextStyle(colors),
       color: colors.series,
+      // `left: "center"` alone centres the block: with textAlign unset ECharts
+      // nudges the anchor to the container centre itself. Setting textAlign
+      // explicitly skips that nudge and shifts the text half its width left.
       title: {
         text: formatAmount(total),
         subtext: t("dashboard.categoryTotal"),
         left: "center",
         top: "30%",
-        textAlign: "center",
         textStyle: {
           color: colors.text,
           fontSize: 15,
