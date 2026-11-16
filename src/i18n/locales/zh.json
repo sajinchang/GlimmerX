@@ -334,6 +334,7 @@
     "spent": "已支出",
     "limit": "限额",
     "remaining": "剩余",
+    "carryOver": "上期结转",
     "overBudget": "超支",
     "created": "预算创建成功",
     "updated": "预算更新成功",

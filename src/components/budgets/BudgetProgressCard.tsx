@@ -114,6 +114,18 @@ export function BudgetProgressCard({
           {formatAmount(budget.remaining)}
         </span>
       </div>
+
+      {/* The backend folds the carry into `remaining` but not into the limit
+          shown above, so with rollover on, remaining can exceed the limit and
+          the three figures above cannot be reconciled without this line. */}
+      {budget.rolloverAmount > 0 && (
+        <div className="mt-0.5 text-xs text-muted-foreground">
+          {t("budgets.carryOver")}:{" "}
+          <span className="font-mono">
+            {formatAmount(budget.rolloverAmount)}
+          </span>
+        </div>
+      )}
     </div>
   );
 }

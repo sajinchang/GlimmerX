@@ -334,6 +334,7 @@
     "spent": "Spent",
     "limit": "Limit",
     "remaining": "Remaining",
+    "carryOver": "Carried over",
     "overBudget": "Over Budget",
     "created": "Budget created successfully",
     "updated": "Budget updated successfully",
