@@ -8,6 +8,12 @@
 
 ![首页概览](screenshots/home.png)
 
+|                                            |                                            |
+| ------------------------------------------ | ------------------------------------------ |
+| **账户管理**<br>![账户管理](screenshots/accounts.png)     | **交易列表**<br>![交易列表](screenshots/transactions.png) |
+| **分类管理**<br>![分类管理](screenshots/categories.png)   | **预算管理**<br>![预算管理](screenshots/budgets.png)     |
+| **储蓄目标**<br>![储蓄目标](screenshots/savings-goals.png) | **报表分析**<br>![报表分析](screenshots/report.png)       |
+
 ## 功能特性
 
 ### 已实现功能
@@ -33,16 +39,6 @@
 | 状态管理 | Zustand + React Query      |
 | 图表     | ECharts 6（按需注册）       |
 | 国际化   | i18next                    |
-
-## 开发方式
-
-本项目由 **OpenCode + GLM-5** 完全驱动开发，实现 **100% AI 生成代码**。
-
-- 所有源代码、设计文档、配置文件均由 AI 编写
-- 零手动修改 — 人类仅提供需求、审查输出、做出决策
-- AI 负责完整的软件工程流程：需求分析、架构设计、编码实现、调试修复、测试编写
-
-这是对 AI 辅助软件开发能力的实际验证项目。
 
 ## 项目结构
 
@@ -167,8 +163,4 @@ Rust 后端构造英文 prompt（注入当前日期/分类清单/账户清单）
 ## 许可证
 
 **GNU General Public License v3.0**
-
-- 个人和商业均可免费使用、修改本软件
-- 修改后的版本分发时必须以 GPL v3 发布（开源）
-- 此机制防止商业闭源二次售卖
 - 详见 [LICENSE](LICENSE) 文件

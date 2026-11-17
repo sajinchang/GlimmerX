@@ -19,6 +19,12 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: "./src/setupTests.ts",
     globals: true,
+    // Pin the test timezone. Timestamp formatters render RFC3339 values in
+    // the user's local timezone (design rule: dates are local), so an
+    // expectation like "13:45" for `2026-10-26T13:45:00+08:00` only holds
+    // when local time is UTC+08. CI runs in UTC, which turned that into
+    // "05:45"; keep every environment on the same zone instead.
+    env: { TZ: "Asia/Shanghai" },
     coverage: {
       provider: "v8",
       reporter: ["text", "json-summary", "lcov"],
