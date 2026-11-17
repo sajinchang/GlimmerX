@@ -109,6 +109,7 @@ make test          # 运行测试
 ## 构建发布
 
 ```bash
+make version V=0.2.0   # 一键升版本号（唯一来源 Cargo.toml，安装包版本自动跟随）
 make release           # 当前平台安装版
 make release-windows   # Windows: NSIS + MSI + MSIX
 make release-linux     # Linux: AppImage + deb + rpm

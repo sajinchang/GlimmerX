@@ -1,6 +1,6 @@
 [package]
 name = "glimmerx"
-version = "0.1.2"
+version = "1.0.0"
 description = "A personal double-entry bookkeeping desktop app"
 authors = ["you"]
 edition = "2021"

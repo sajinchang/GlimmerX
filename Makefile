@@ -1,4 +1,4 @@
-.PHONY: help setup dev dev-web lint lint-frontend lint-backend fmt fmt-frontend fmt-backend test test-frontend test-backend coverage coverage-install check release release-windows release-linux release-mac portable portable-windows portable-linux clean _collect-release _clean-bundles
+.PHONY: help setup dev dev-web lint lint-frontend lint-backend fmt fmt-frontend fmt-backend test test-frontend test-backend coverage coverage-install check version release release-windows release-linux release-mac portable portable-windows portable-linux clean _collect-release _clean-bundles
 
 SHELL := /bin/bash
 
@@ -17,6 +17,7 @@ help:
 	@echo "  make check        Full check (tsc + lint + fmt check + clippy + docs + i18n)"
 	@echo ""
 	@echo "  Release (安装版):"
+	@echo "  make version V=x.y.z  Bump version (single source: Cargo.toml)"
 	@echo "  make release          Build installers for current platform"
 	@echo "  make release-windows  Windows: NSIS + MSI + MSIX"
 	@echo "  make release-linux    Linux: AppImage + deb + rpm"
@@ -203,6 +204,17 @@ _collect-release:
 		cp src-tauri/target/release/bundle/macos/*.app release/ 2>/dev/null || true; \
 	fi
 	@echo "✓ Artifacts collected to: release/"
+
+# Bump the app version in one place. Cargo.toml is the single source: the
+# installers read it through tauri.conf.json's fallback, package.json is npm
+# bookkeeping, and Cargo.lock follows via `cargo update -w`.
+version:
+	@test -n "$(V)" || { echo "usage: make version V=0.2.0"; exit 1; }
+	@npm version "$(V)" --no-git-tag-version
+	@node -e 'const fs=require("fs");const f="src-tauri/Cargo.toml";const v=process.argv[1];const s=fs.readFileSync(f,"utf8");if(!/^version = "[^"]*"/m.test(s)){console.error("version line not found in Cargo.toml");process.exit(1)}fs.writeFileSync(f,s.replace(/^version = "[^"]*"/m,"version = \""+v+"\""));console.log("Cargo.toml -> "+v)' "$(V)"
+	@cd src-tauri && cargo update -w --quiet
+	@awk '/name = "glimmerx"/{found=1;next} found&&/^version/{if($$0 ~ /$(V)/)exit 0; print "Cargo.lock not synced to $(V)"; exit 1}' src-tauri/Cargo.lock
+	@echo "✓ Version bumped to $(V)"
 
 release:
 	@OS=$$(uname -s); \
